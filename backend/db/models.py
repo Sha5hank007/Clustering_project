@@ -1,23 +1,39 @@
-"""
-SQLAlchemy ORM models.
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, relationship
+from pgvector.sqlalchemy import Vector
 
-persons
-  - id: int PK
-  - centroid: Vector(512)           -- running mean of all embeddings
-  - embedding_count: int            -- how many embeddings folded into centroid
-  - sighting_count: int             -- total visits recorded
-  - first_seen: datetime(tz)
-  - last_seen: datetime(tz)
-  - label: str nullable             -- owner-assigned name
-  - model_version: str              -- embedding model used
 
-sightings
-  - id: int PK
-  - person_id: FK -> persons.id
-  - camera_id: str                  -- logical camera name from .env
-  - seen_at: datetime(tz)
-  - quality_score: float
-  - embedding: Vector(512)
-  - crop_path: str nullable         -- null if no crop retained for this sighting
-  - bbox: JSONB                     -- [x1, y1, x2, y2]
-"""
+class Base(DeclarativeBase):
+    pass
+
+
+class Person(Base):
+    __tablename__ = "persons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    centroid = Column(Vector(512), nullable=False)
+    embedding_count = Column(Integer, default=1, nullable=False)
+    sighting_count = Column(Integer, default=1, nullable=False)
+    first_seen = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_seen = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    label = Column(Text, nullable=True)
+    model_version = Column(String(50), default="w600k_r50", nullable=False)
+
+    sightings = relationship("Sighting", back_populates="person", cascade="all, delete-orphan")
+
+
+class Sighting(Base):
+    __tablename__ = "sightings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id", ondelete="CASCADE"), nullable=False)
+    camera_id = Column(String(100), nullable=False)
+    seen_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    quality_score = Column(Float, nullable=True)
+    embedding = Column(Vector(512), nullable=True)
+    crop_path = Column(Text, nullable=True)
+    bbox = Column(JSONB, nullable=True)
+
+    person = relationship("Person", back_populates="sightings")
+
