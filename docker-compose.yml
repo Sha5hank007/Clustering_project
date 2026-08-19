@@ -1,0 +1,52 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-facetrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-facetrack}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-facetrack}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # worker:
+  #   build: ./backend
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   env_file: .env
+  #   volumes:
+  #     - ./data/crops:/app/data/crops
+  #     - insightface_models:/root/.insightface/models
+  #   # devices:
+  #   #   - /dev/video0:/dev/video0  # uncomment for webcam in container
+
+  # api:
+  #   build: ./backend
+  #   command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   env_file: .env
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./data/crops:/app/data/crops
+
+  # web:
+  #   build: ./frontend
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - api
+
+volumes:
+  pgdata:
+  # insightface_models:  # persist models across container rebuilds
