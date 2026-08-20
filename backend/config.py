@@ -43,12 +43,15 @@ class Settings(BaseSettings):
     postgres_user: str = "facetrack"
     postgres_password: str = "changeme"
     postgres_db: str = "facetrack"
-    database_url: str = "postgresql+asyncpg://facetrack:changeme@localhost:5432/facetrack"
+    database_url: str = "postgresql+asyncpg://postgres:Shashank123@localhost:5432/facetrack"
+
 
     # RTSP
     rtsp_buffer_size: int = 1
     rtsp_reconnect_delay: int = 5
     rtsp_max_reconnects: int = 50
+    
+    model_dir: str = "./models"
 
     @property
     def det_size_tuple(self) -> tuple[int, int]:

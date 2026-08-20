@@ -2,6 +2,13 @@
 Alembic migration environment.
 Reads DATABASE_URL from config.py so migrations use the same .env as the app.
 """
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
 import asyncio
 from logging.config import fileConfig
 from sqlalchemy import pool

@@ -41,3 +41,6 @@ docker-compose.override.yml
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+
+# ── ONNX models (downloaded manually, ~180MB) ──
+backend/models/*.onnx
