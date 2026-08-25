@@ -13,8 +13,12 @@ class Settings(BaseSettings):
     camera_id: str = "default_cam"
     camera_roi: Optional[str] = None
 
+    # Models
+    model_dir: str = "./models"
+    detector_model: str = "det_10g.onnx"
+    recognizer_model: str = "w600k_r50.onnx"
+
     # Detection
-    model_pack: str = "buffalo_l"
     det_size: str = "320,320"
     det_threshold: float = 0.6
     detect_interval: int = 3
@@ -43,15 +47,15 @@ class Settings(BaseSettings):
     postgres_user: str = "facetrack"
     postgres_password: str = "changeme"
     postgres_db: str = "facetrack"
-    database_url: str = "postgresql+asyncpg://postgres:Shashank123@localhost:5432/facetrack"
-
+    database_url: str = "postgresql+asyncpg://facetrack:changeme@localhost:5432/facetrack"
 
     # RTSP
     rtsp_buffer_size: int = 1
     rtsp_reconnect_delay: int = 5
     rtsp_max_reconnects: int = 50
-    
-    model_dir: str = "./models"
+
+    # Debug
+    debug_display: bool = True
 
     @property
     def det_size_tuple(self) -> tuple[int, int]:

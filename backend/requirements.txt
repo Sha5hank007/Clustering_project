@@ -2,22 +2,22 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
 pydantic==2.9.0
-pydantic-settings==2.15.0
+pydantic-settings==2.5.0
 python-multipart==0.0.9
-
 
 # ── Database ──
 sqlalchemy[asyncio]==2.0.35
-asyncpg==0.31.0
-alembic==1.19.1
+asyncpg==0.29.0
+alembic==1.13.0
 pgvector==0.3.0
 
-# ── Face Recognition ──
+# ── Face Recognition (ONNX models loaded directly, no insightface package) ──
 onnxruntime==1.19.0
 numpy==1.26.4
-opencv-python-headless==4.10.0.84
-insightface==0.7.3
+
+# ── Image / Video ──
+opencv-python==4.10.0.84
+Pillow==10.4.0
 
 # ── Utilities ──
-Pillow==10.4.0
 python-dotenv==1.0.1
