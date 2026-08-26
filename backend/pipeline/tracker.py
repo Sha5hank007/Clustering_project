@@ -1,11 +1,10 @@
 """
-IoU-based multi-face tracker. No neural network, no dependencies beyond numpy.
+IoU + center-distance tracker. No neural network, no dependencies beyond numpy.
 
-Core idea:
-  - Detector gives us bounding boxes per frame but has no memory.
-  - Tracker links boxes across frames: "bbox in frame 1 overlaps 85%
-    with bbox in frame 2 → same person, same track_id."
-  - One track = one continuous appearance of one face.
+Two matching strategies (uses the better one):
+  1. IoU — works when person is still or moving slowly
+  2. Center distance — fallback when person moves fast and bboxes
+     don't overlap, but centers are still close
 
 Track lifecycle:
   1. CREATED  — unmatched detection starts a new track
@@ -13,10 +12,6 @@ Track lifecycle:
   3. DEAD     — MAX_MISSES consecutive detection frames without a match
 
 When a track dies, it emits its best crops (by quality_score).
-These crops are the input to the embedder (Person B's code).
-
-On skip frames (no detection runs), tracks predict their position
-using velocity. No misses are counted during skip frames.
 """
 import numpy as np
 from dataclasses import dataclass, field
@@ -27,9 +22,9 @@ from config import settings
 @dataclass
 class CropInfo:
     """Everything the embedder needs from one crop."""
-    crop: np.ndarray        # BGR face crop from original frame
-    bbox: np.ndarray        # [x1, y1, x2, y2]
-    landmarks: np.ndarray   # (5, 2) keypoints
+    crop: np.ndarray
+    bbox: np.ndarray
+    landmarks: np.ndarray
     quality_score: float
     timestamp: float
 
@@ -38,15 +33,28 @@ class CropInfo:
 class Track:
     """One tracked face across multiple frames."""
     track_id: int
-    bbox: np.ndarray              # current [x1, y1, x2, y2]
+    bbox: np.ndarray
     velocity: np.ndarray = field(default_factory=lambda: np.zeros(4))
-    age: int = 0                  # total frames since creation
-    misses: int = 0               # consecutive detection frames without match
+    age: int = 0
+    misses: int = 0
     crops: list[CropInfo] = field(default_factory=list)
+    _velocity_alpha: float = 0.4  # smoothing factor for velocity EMA
 
     def update_bbox(self, new_bbox: np.ndarray) -> None:
         """Update position and velocity from a matched detection."""
-        self.velocity = new_bbox - self.bbox
+        # Raw velocity = how much the bbox moved since last known position
+        raw_velocity = new_bbox - self.bbox
+
+        # Exponential moving average — prevents one jerky frame from
+        # sending the prediction wildly off
+        if self.age == 0:
+            self.velocity = raw_velocity
+        else:
+            self.velocity = (
+                self._velocity_alpha * raw_velocity
+                + (1 - self._velocity_alpha) * self.velocity
+            )
+
         self.bbox = new_bbox.copy()
         self.misses = 0
         self.age += 1
@@ -59,10 +67,7 @@ class Track:
     def maybe_add_crop(
         self, frame: np.ndarray, detection: FaceDetection, quality_score: float
     ) -> None:
-        """
-        Add a crop to the buffer if it's better than the worst one,
-        or if the buffer isn't full yet.
-        """
+        """Add a crop to the buffer if it's better than the worst one."""
         bbox = detection.bbox.astype(int)
         h, w = frame.shape[:2]
         x1 = max(0, bbox[0])
@@ -86,13 +91,11 @@ class Track:
         if len(self.crops) < max_crops:
             self.crops.append(crop_info)
         elif quality_score > min(c.quality_score for c in self.crops):
-            # Replace the worst crop
             worst_idx = min(range(len(self.crops)), key=lambda i: self.crops[i].quality_score)
             self.crops[worst_idx] = crop_info
 
     @property
     def best_crop(self) -> CropInfo | None:
-        """Highest quality crop in the buffer."""
         if not self.crops:
             return None
         return max(self.crops, key=lambda c: c.quality_score)
@@ -102,12 +105,18 @@ class Tracker:
     """
     Manages all active tracks. Called by worker.py each frame.
 
-    Two methods:
-      update(detections, frame) — on detection frames. Matches detections
-        to tracks, creates/kills tracks, returns dead tracks.
-      predict() — on skip frames. Shifts bboxes by velocity.
-        Returns any tracks that died (from accumulated misses).
+    Matching uses a combined cost:
+      - IoU (intersection over union of bboxes)
+      - Center distance relative to face size
+    A match is valid if IoU > threshold OR center distance < max_center_dist.
+    This handles the case where a person moves quickly — bboxes don't overlap
+    but centers are still close.
     """
+
+    # Max center distance as a multiple of face diagonal.
+    # 1.5 means the center can move up to 1.5x the face diagonal
+    # between detection frames and still match.
+    MAX_CENTER_DIST_RATIO = 0.8
 
     def __init__(self):
         self._next_id = 1
@@ -118,49 +127,49 @@ class Tracker:
         detections: list[tuple[FaceDetection, float]],
         frame: np.ndarray,
     ) -> list[Track]:
-        """
-        Match detections to active tracks. Called on detection frames.
+        """Match detections to active tracks on detection frames."""
 
-        Args:
-            detections: list of (FaceDetection, quality_score) from quality.py
-            frame: original BGR frame (for cropping)
-
-        Returns:
-            List of tracks that just died (for embedding by Person B)
-        """
-        det_bboxes = np.array([d.bbox for d, _ in detections]) if detections else np.empty((0, 4))
-        track_bboxes = np.array([t.bbox for t in self.active_tracks]) if self.active_tracks else np.empty((0, 4))
-
-        # Compute IoU matrix: shape (num_tracks, num_detections)
         matched_track_idxs = set()
         matched_det_idxs = set()
-        matches = []  # list of (track_idx, det_idx)
+        matches = []
 
         if len(self.active_tracks) > 0 and len(detections) > 0:
-            iou_matrix = _compute_iou_matrix(track_bboxes, det_bboxes)
+            track_bboxes = np.array([t.bbox for t in self.active_tracks])
+            det_bboxes = np.array([d.bbox for d, _ in detections])
 
-            # Greedy matching: pick highest IoU pairs first
+            # Compute both cost matrices
+            iou_matrix = _compute_iou_matrix(track_bboxes, det_bboxes)
+            center_dist_matrix = _compute_center_dist_matrix(track_bboxes, det_bboxes)
+
+            # Combined validity: match if IoU is good OR center distance is small
+            # For greedy matching, use a combined score (higher = better match)
+            # Normalize center distance to 0-1 range (1 = close, 0 = far)
+            max_dist = self.MAX_CENTER_DIST_RATIO
+            center_score = np.clip(1.0 - center_dist_matrix / max_dist, 0, 1)
+
+            # Take the better of the two scores
+            match_score = np.maximum(iou_matrix, center_score)
+
+            # Greedy matching on combined score
             while True:
-                if iou_matrix.size == 0:
+                if match_score.size == 0:
                     break
 
-                # Find the highest IoU in the matrix
-                max_idx = np.unravel_index(np.argmax(iou_matrix), iou_matrix.shape)
-                max_iou = iou_matrix[max_idx]
+                max_flat = np.argmax(match_score)
+                t_idx, d_idx = divmod(int(max_flat), match_score.shape[1])
+                best_score = match_score[t_idx, d_idx]
 
-                if max_iou < settings.iou_threshold:
-                    break  # no more good matches
-
-                t_idx, d_idx = int(max_idx[0]), int(max_idx[1])
+                # Minimum threshold: at least some IoU or close centers
+                if best_score < 0.15:
+                    break
 
                 if t_idx not in matched_track_idxs and d_idx not in matched_det_idxs:
                     matches.append((t_idx, d_idx))
                     matched_track_idxs.add(t_idx)
                     matched_det_idxs.add(d_idx)
 
-                # Zero out this pair so it's not picked again
-                iou_matrix[t_idx, :] = 0
-                iou_matrix[:, d_idx] = 0
+                match_score[t_idx, :] = 0
+                match_score[:, d_idx] = 0
 
         # ── Apply matches ──
         for t_idx, d_idx in matches:
@@ -174,6 +183,8 @@ class Tracker:
             if t_idx not in matched_track_idxs:
                 self.active_tracks[t_idx].misses += 1
                 self.active_tracks[t_idx].age += 1
+                # Stop predicting — velocity is meaningless without matches
+                self.active_tracks[t_idx].velocity = np.zeros(4)
 
         # ── Create new tracks for unmatched detections ──
         for d_idx in range(len(detections)):
@@ -191,37 +202,23 @@ class Tracker:
         dead = [t for t in self.active_tracks if t.misses >= settings.max_misses]
         self.active_tracks = [t for t in self.active_tracks if t.misses < settings.max_misses]
 
-        # Only return dead tracks that have crops (worth embedding)
         return [t for t in dead if len(t.crops) > 0]
 
     def predict(self) -> list[Track]:
-        """
-        On skip frames: shift all bboxes by velocity.
-        No misses counted. Returns empty list (tracks don't die on skip frames).
-        """
+        """On skip frames: shift bboxes by velocity for healthy tracks only."""
         for track in self.active_tracks:
-            track.predict_bbox()
+            if track.misses == 0:
+                track.predict_bbox()
         return []
 
 
 def _compute_iou_matrix(
     bboxes_a: np.ndarray, bboxes_b: np.ndarray
 ) -> np.ndarray:
-    """
-    Compute IoU between every pair from two sets of bboxes.
+    """IoU between every pair. Shape (N, M)."""
+    a = bboxes_a[:, np.newaxis, :]
+    b = bboxes_b[np.newaxis, :, :]
 
-    Args:
-        bboxes_a: shape (N, 4) — [x1, y1, x2, y2]
-        bboxes_b: shape (M, 4)
-
-    Returns:
-        IoU matrix: shape (N, M)
-    """
-    # Expand dims for broadcasting: (N, 1, 4) vs (1, M, 4)
-    a = bboxes_a[:, np.newaxis, :]  # (N, 1, 4)
-    b = bboxes_b[np.newaxis, :, :]  # (1, M, 4)
-
-    # Intersection
     inter_x1 = np.maximum(a[..., 0], b[..., 0])
     inter_y1 = np.maximum(a[..., 1], b[..., 1])
     inter_x2 = np.minimum(a[..., 2], b[..., 2])
@@ -229,9 +226,41 @@ def _compute_iou_matrix(
 
     inter_area = np.maximum(0, inter_x2 - inter_x1) * np.maximum(0, inter_y2 - inter_y1)
 
-    # Union
     area_a = (a[..., 2] - a[..., 0]) * (a[..., 3] - a[..., 1])
     area_b = (b[..., 2] - b[..., 0]) * (b[..., 3] - b[..., 1])
     union_area = area_a + area_b - inter_area + 1e-6
 
     return inter_area / union_area
+
+
+def _compute_center_dist_matrix(
+    bboxes_a: np.ndarray, bboxes_b: np.ndarray
+) -> np.ndarray:
+    """
+    Center distance between every pair, normalized by face diagonal.
+    Returns shape (N, M). Values close to 0 = centers are close.
+
+    Normalization by face diagonal makes this scale-invariant:
+    a 200px face moving 50px is the same "distance" as a 100px face moving 25px.
+    """
+    # Centers of A
+    cx_a = (bboxes_a[:, 0] + bboxes_a[:, 2]) / 2  # (N,)
+    cy_a = (bboxes_a[:, 1] + bboxes_a[:, 3]) / 2
+    # Diagonals of A (for normalization)
+    w_a = bboxes_a[:, 2] - bboxes_a[:, 0]
+    h_a = bboxes_a[:, 3] - bboxes_a[:, 1]
+    diag_a = np.sqrt(w_a**2 + h_a**2) + 1e-6  # (N,)
+
+    # Centers of B
+    cx_b = (bboxes_b[:, 0] + bboxes_b[:, 2]) / 2  # (M,)
+    cy_b = (bboxes_b[:, 1] + bboxes_b[:, 3]) / 2
+
+    # Euclidean distance between every pair of centers
+    dx = cx_a[:, np.newaxis] - cx_b[np.newaxis, :]  # (N, M)
+    dy = cy_a[:, np.newaxis] - cy_b[np.newaxis, :]
+    dist = np.sqrt(dx**2 + dy**2)
+
+    # Normalize by face diagonal of track (A)
+    normalized = dist / diag_a[:, np.newaxis]
+
+    return normalized

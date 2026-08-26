@@ -1,16 +1,11 @@
 """
 Main ingestion loop. Entry point: python -m pipeline.worker
 
-Ties together: source → detector → quality → tracker
-Outputs dead tracks for Person B's embedding/matching pipeline.
+Full pipeline:
+  source → detector → quality → tracker → embedder → matcher → cooldown → retention → DB
 
-When DEBUG_DISPLAY=true in .env, shows a live window with:
-  - Green boxes around tracked faces
-  - Track IDs
-  - Quality scores
-  - FPS counter
-
-Press 'q' to quit when debug display is on.
+When DEBUG_DISPLAY=true, shows a live window with bounding boxes,
+track IDs, person IDs, and FPS. Press 'q' to quit.
 """
 import sys
 import time
@@ -21,6 +16,8 @@ from sources.factory import create_source
 from pipeline.detector import Detector
 from pipeline.quality import filter_detections
 from pipeline.tracker import Tracker, Track
+from pipeline.embedder import Embedder
+from pipeline import matcher, cooldown, retention
 from config import settings
 
 logging.basicConfig(
@@ -30,24 +27,45 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def process_dead_track(track: Track) -> None:
+def process_dead_track(track: Track, embedder: Embedder) -> None:
     """
-    Called when a track dies. This is the handoff point to Person B's code.
-
-    Person B will replace this with:
+    Full processing of a dead track:
+    embed → match → cooldown → retention
+    """
+    try:
+        # Step 1: Embed — align + ArcFace on best crops → 512-d vector
         embedding = embedder.embed(track.crops)
-        person_id = matcher.match_or_create(embedding, timestamp)
-        should_insert = cooldown.check(person_id, camera_id, timestamp)
-        if should_insert:
-            retention.handle(person_id, track.best_crop, timestamp)
-    """
-    best = track.best_crop
-    logger.info(
-        f"Track {track.track_id} died | "
-        f"age={track.age} frames | "
-        f"crops={len(track.crops)} | "
-        f"best_quality={best.quality_score:.3f}"
-    )
+
+        # Step 2: Match — cosine search against persons table
+        conn = matcher.get_connection()
+        try:
+            person_id = matcher.match_or_create(embedding, track.best_crop.timestamp)
+
+            # Step 3: Cooldown — was this person seen recently on this camera?
+            should_insert = cooldown.check(
+                person_id, settings.camera_id, track.best_crop.timestamp, conn
+            )
+
+            # Step 4: Retention — insert sighting row, maybe save crop
+            if should_insert:
+                retention.handle(
+                    person_id=person_id,
+                    embedding=embedding,
+                    crop_info=track.best_crop,
+                    camera_id=settings.camera_id,
+                    timestamp=track.best_crop.timestamp,
+                    conn=conn,
+                )
+            else:
+                logger.info(
+                    f"Track {track.track_id} → person {person_id} "
+                    f"(within cooldown, no sighting row)"
+                )
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Failed processing track {track.track_id}: {e}", exc_info=True)
 
 
 def draw_debug(
@@ -60,15 +78,17 @@ def draw_debug(
     display = frame.copy()
 
     for track in tracker.active_tracks:
+        # Don't draw dying tracks — they have no confirmed position
+        if track.misses > 2:
+            continue
+
         bbox = track.bbox.astype(int)
         x1, y1, x2, y2 = bbox
 
-        # Green box for active tracks, yellow for tracks with misses
         color = (0, 255, 0) if track.misses == 0 else (0, 255, 255)
         cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
 
-        # Track ID and quality
-        label = f"ID:{track.track_id}"
+        label = f"T:{track.track_id}"
         if track.crops:
             label += f" Q:{track.best_crop.quality_score:.2f}"
 
@@ -78,7 +98,6 @@ def draw_debug(
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1,
         )
 
-    # FPS and stats in top-left
     cv2.putText(
         display,
         f"FPS: {fps:.1f} | Tracks: {len(tracker.active_tracks)} | Dets: {detections_this_frame}",
@@ -90,16 +109,22 @@ def draw_debug(
 
 
 def run() -> None:
-    logger.info("Starting ingestion worker")
-    logger.info(f"Camera source: {settings.camera_source}")
-    logger.info(f"Detector model: {settings.detector_model}")
-    logger.info(f"Det size: {settings.det_size_tuple}")
-    logger.info(f"Detect interval: {settings.detect_interval}")
-    logger.info(f"Debug display: {settings.debug_display}")
+    logger.info("=" * 50)
+    logger.info("Starting Face Track ingestion worker")
+    logger.info(f"  Camera: {settings.camera_source}")
+    logger.info(f"  Camera ID: {settings.camera_id}")
+    logger.info(f"  Detector: {settings.detector_model}")
+    logger.info(f"  Recognizer: {settings.recognizer_model}")
+    logger.info(f"  Det size: {settings.det_size_tuple}")
+    logger.info(f"  Detect interval: {settings.detect_interval}")
+    logger.info(f"  Cooldown: {settings.cooldown_hours}h")
+    logger.info(f"  Debug display: {settings.debug_display}")
+    logger.info("=" * 50)
 
     # ── Initialize ──
     source = create_source()
     detector = Detector()
+    embedder = Embedder()
     tracker = Tracker()
 
     frame_count = 0
@@ -108,6 +133,7 @@ def run() -> None:
     frame_interval = 1.0 / settings.fps_sample_rate
     last_frame_time = 0.0
     detections_this_frame = 0
+    total_tracks_processed = 0
 
     logger.info("Pipeline ready. Processing frames...")
 
@@ -121,7 +147,6 @@ def run() -> None:
                 continue
 
             # ── FPS throttle ──
-            # Skip frames if camera produces faster than FPS_SAMPLE_RATE
             if timestamp - last_frame_time < frame_interval:
                 continue
             last_frame_time = timestamp
@@ -139,9 +164,10 @@ def run() -> None:
                 # ── Skip frame: predict only ──
                 dead_tracks = tracker.predict()
 
-            # ── Handle dead tracks ──
+            # ── Process dead tracks → embed → match → DB ──
             for track in dead_tracks:
-                process_dead_track(track)
+                process_dead_track(track, embedder)
+                total_tracks_processed += 1
 
             # ── FPS calculation ──
             elapsed = time.time() - fps_timer
@@ -161,10 +187,18 @@ def run() -> None:
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")
     finally:
+        # ── Flush surviving tracks — don't lose data on shutdown ──
+        surviving = [t for t in tracker.active_tracks if len(t.crops) > 0]
+        if surviving:
+            logger.info(f"Processing {len(surviving)} surviving tracks before exit...")
+            for track in surviving:
+                process_dead_track(track, embedder)
+                total_tracks_processed += 1
+
         source.release()
         if settings.debug_display:
             cv2.destroyAllWindows()
-        logger.info("Worker stopped.")
+        logger.info(f"Worker stopped. Total tracks processed: {total_tracks_processed}")
 
 
 if __name__ == "__main__":

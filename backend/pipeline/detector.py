@@ -52,7 +52,7 @@ class Detector:
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         # Use all physical cores
         sess_opts.intra_op_num_threads = os.cpu_count()
-        sess_opts.log_severity_level = 3  # only show errors, not warnings
+        sess_opts.log_severity_level = 3
 
         self.session = ort.InferenceSession(
             model_path,

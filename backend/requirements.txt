@@ -10,6 +10,7 @@ sqlalchemy[asyncio]==2.0.35
 asyncpg==0.29.0
 alembic==1.13.0
 pgvector==0.3.0
+psycopg2-binary==2.9.9
 
 # ── Face Recognition (ONNX models loaded directly, no insightface package) ──
 onnxruntime==1.19.0
