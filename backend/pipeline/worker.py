@@ -15,12 +15,19 @@ Press 'q' to quit when debug display is on.
 import sys
 import time
 import logging
+from datetime import datetime, timezone
+
 import cv2
 import numpy as np
+
 from sources.factory import create_source
 from pipeline.detector import Detector
+from pipeline.embedder import FaceEmbedder
 from pipeline.quality import filter_detections
 from pipeline.tracker import Tracker, Track
+from pipeline.matcher import insert_sighting, match_or_create
+from pipeline.cooldown import should_insert_sighting
+from pipeline.retention import save_best_crop
 from config import settings
 
 logging.basicConfig(
@@ -28,25 +35,58 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+embedder = FaceEmbedder()
 
 
 def process_dead_track(track: Track) -> None:
-    """
-    Called when a track dies. This is the handoff point to Person B's code.
-
-    Person B will replace this with:
-        embedding = embedder.embed(track.crops)
-        person_id = matcher.match_or_create(embedding, timestamp)
-        should_insert = cooldown.check(person_id, camera_id, timestamp)
-        if should_insert:
-            retention.handle(person_id, track.best_crop, timestamp)
-    """
+    """Turn a dead track into an identity match + sighting update."""
     best = track.best_crop
+    if best is None:
+        logger.warning("Track %s died without any crop buffer", track.track_id)
+        return
+
+    seen_at = datetime.fromtimestamp(best.timestamp, tz=timezone.utc)
+    embedding = embedder.embed_track(track)
+    person_id = match_or_create(embedding, seen_at)
+
+    should_insert = should_insert_sighting(person_id, settings.camera_id, seen_at)
+
+    if should_insert:
+        crop_path = save_best_crop(
+            person_id=person_id,
+            crop=best.crop,
+            seen_at=seen_at,
+            quality_score=float(best.quality_score),
+        )
+        insert_sighting(
+            person_id=person_id,
+            camera_id=settings.camera_id,
+            seen_at=seen_at,
+            embedding=embedding,
+            quality_score=float(best.quality_score),
+            crop_path=crop_path,
+            bbox=best.bbox.astype(float).tolist(),
+        )
+        logger.info(
+            "Track %s matched person %s and inserted sighting at %s (crop=%s)",
+            track.track_id,
+            person_id,
+            seen_at.isoformat(),
+            crop_path,
+        )
+    else:
+        logger.info(
+            "Track %s matched person %s but skipped new sighting due to cooldown.",
+            track.track_id,
+            person_id,
+        )
+
     logger.info(
         f"Track {track.track_id} died | "
         f"age={track.age} frames | "
         f"crops={len(track.crops)} | "
-        f"best_quality={best.quality_score:.3f}"
+        f"best_quality={best.quality_score:.3f} | "
+        f"person_id={person_id}"
     )
 
 
@@ -113,7 +153,7 @@ def run() -> None:
 
     try:
         while True:
-            ok, frame, timestamp = source.read()
+            ok, frame, timestamp = source.read() # Motion Check
 
             if not ok:
                 logger.warning("Frame source returned not ok. Retrying...")
