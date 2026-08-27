@@ -179,6 +179,11 @@ def run() -> None:
             # ── Debug display ──
             if settings.debug_display:
                 display = draw_debug(frame, tracker, fps, detections_this_frame)
+                # Resize to fit screen — cap width at 1280px
+                h, w = display.shape[:2]
+                if w > 1280:
+                    scale = 1280 / w
+                    display = cv2.resize(display, (1280, int(h * scale)))
                 cv2.imshow("Face Track — press q to quit", display)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     logger.info("Quit signal received.")

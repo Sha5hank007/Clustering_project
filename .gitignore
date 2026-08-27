@@ -10,7 +10,7 @@ venv/
 env/
 
 # ── Environment ──
-.env
+backend/.env
 
 # ── InsightFace models (downloaded at runtime, ~1GB) ──
 # These live at ~/.insightface/models/ on host
