@@ -21,7 +21,7 @@ from pipeline import matcher, cooldown, retention
 from config import settings
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -128,6 +128,7 @@ def run() -> None:
     tracker = Tracker()
 
     frame_count = 0
+    detect_count = 0
     fps_timer = time.time()
     fps = 0.0
     frame_interval = 1.0 / settings.fps_sample_rate
@@ -151,15 +152,34 @@ def run() -> None:
                 continue
             last_frame_time = timestamp
 
+            # ── Downscale high-res frames ──
+            # 4K video at 640×640 detection = faces too small to detect.
+            # Cap frame at 1920px wide — detection, tracking, and crops
+            # all work on the downscaled frame. No information loss for
+            # face recognition (112×112 aligned crops don't need 4K).
+            h, w = frame.shape[:2]
+            if w > 1920:
+                scale = 1920 / w
+                frame = cv2.resize(frame, (1920, int(h * scale)))
+
             frame_count += 1
+            detect_count += 1
             dead_tracks = []
 
-            if frame_count % settings.detect_interval == 0:
+            if detect_count % settings.detect_interval == 0:
                 # ── Detection frame ──
                 raw_detections = detector.detect(frame, timestamp)
                 filtered = filter_detections(raw_detections, frame)
                 dead_tracks = tracker.update(filtered, frame)
                 detections_this_frame = len(filtered)
+                if raw_detections and not filtered:
+                    logger.debug(
+                        f"All {len(raw_detections)} detections rejected by quality gate"
+                    )
+                elif raw_detections:
+                    logger.debug(
+                        f"Detections: {len(raw_detections)} raw → {len(filtered)} passed quality"
+                    )
             else:
                 # ── Skip frame: predict only ──
                 dead_tracks = tracker.predict()
