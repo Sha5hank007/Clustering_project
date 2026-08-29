@@ -29,6 +29,7 @@ from pipeline.matcher import insert_sighting, match_or_create
 from pipeline.cooldown import should_insert_sighting
 from pipeline.retention import save_best_crop
 from config import settings
+from db.async_runner import run_async, shutdown_async_runner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -204,6 +205,10 @@ def run() -> None:
         source.release()
         if settings.debug_display:
             cv2.destroyAllWindows()
+        try:
+            run_async(shutdown_async_runner())
+        except Exception:
+            logger.exception("Failed to shut down async DB runner cleanly")
         logger.info("Worker stopped.")
 
 

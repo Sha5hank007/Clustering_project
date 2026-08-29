@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Face-Track",
+      "Group": "Servers",
+      "Host": "db",
+      "Port": 5432,
+      "MaintenanceDB": "facetrack",
+      "Username": "postgres",
+      "PassFile": "/pgpass",
+      "SSLMode": "prefer"
+    }
+  }
+}

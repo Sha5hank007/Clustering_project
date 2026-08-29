@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, select
 
 from config import settings
+from db.async_runner import run_async
 from db.models import Person, Sighting
 from db.session import AsyncSessionLocal
 
@@ -53,4 +53,4 @@ def should_insert_sighting(
     camera_id: str,
     seen_at: datetime | None = None,
 ) -> bool:
-    return asyncio.run(_should_insert_sighting_async(person_id, camera_id, seen_at))
+    return run_async(_should_insert_sighting_async(person_id, camera_id, seen_at))

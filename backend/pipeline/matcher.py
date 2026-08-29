@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from typing import Sequence
 
@@ -10,6 +9,7 @@ import numpy as np
 from sqlalchemy import select
 
 from config import settings
+from db.async_runner import run_async
 from db.models import Person, Sighting
 from db.session import AsyncSessionLocal
 
@@ -100,7 +100,7 @@ async def insert_sighting_async(
 
 
 def match_or_create(embedding: Sequence[float], seen_at: datetime | None = None) -> int:
-    return asyncio.run(_match_or_create_async(embedding, seen_at))
+    return run_async(_match_or_create_async(embedding, seen_at))
 
 
 def insert_sighting(
@@ -112,7 +112,7 @@ def insert_sighting(
     crop_path: str | None = None,
     bbox: list[float] | None = None,
 ) -> int:
-    return asyncio.run(
+    return run_async(
         insert_sighting_async(
             person_id=person_id,
             camera_id=camera_id,

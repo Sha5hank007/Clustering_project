@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import datetime, timezone
 
@@ -11,6 +10,7 @@ import numpy as np
 from sqlalchemy import select
 
 from config import settings
+from db.async_runner import run_async
 from db.models import Sighting
 from db.session import AsyncSessionLocal
 
@@ -70,7 +70,7 @@ def save_best_crop(
     seen_at: datetime,
     quality_score: float,
 ) -> str | None:
-    return asyncio.run(_save_best_crop_async(person_id, crop, seen_at, quality_score))
+    return run_async(_save_best_crop_async(person_id, crop, seen_at, quality_score))
 
 
 def _bucket_start(seen_at: datetime) -> int:
