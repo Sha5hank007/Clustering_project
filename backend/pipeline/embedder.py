@@ -47,8 +47,9 @@ class FaceEmbedder:
         mean = stacked.mean(axis=0)
         return _normalize(mean)
 
-    def _embed_one(self, crop_info: CropInfo) -> np.ndarray:
-        aligned = self._align_face(crop_info.crop, crop_info.bbox, crop_info.landmarks)
+    def embed_face(self, crop: np.ndarray, bbox: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+        """Embed an individual face crop with bounding box and landmarks."""
+        aligned = self._align_face(crop, bbox, landmarks)
         blob = self._preprocess(aligned)
         outputs = self.session.run(self.output_names, {self.input_name: blob})
         embedding = outputs[0]
@@ -56,6 +57,9 @@ class FaceEmbedder:
             embedding = np.asarray(embedding)
         embedding = np.asarray(embedding).reshape(-1).astype(np.float32)
         return _normalize(embedding)
+
+    def _embed_one(self, crop_info: CropInfo) -> np.ndarray:
+        return self.embed_face(crop_info.crop, crop_info.bbox, crop_info.landmarks)
 
     def _preprocess(self, face_rgb: np.ndarray) -> np.ndarray:
         img = cv2.cvtColor(face_rgb, cv2.COLOR_BGR2RGB)
