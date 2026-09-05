@@ -25,6 +25,7 @@ def handle(
     camera_id: str,
     timestamp: float,
     conn,
+    job_id: str | None = None,
 ) -> None:
     """
     Insert a sighting row and optionally save a face crop to disk.
@@ -36,6 +37,7 @@ def handle(
         camera_id: which camera
         timestamp: when
         conn: psycopg2 connection
+        job_id: which ingest job produced this (None for live worker)
     """
     # Determine date bucket
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
@@ -86,8 +88,8 @@ def handle(
             """
             INSERT INTO sightings
                 (person_id, camera_id, seen_at, quality_score,
-                 embedding, crop_path, bbox)
-            VALUES (%s, %s, to_timestamp(%s), %s, %s::vector, %s, %s::jsonb)
+                 embedding, crop_path, bbox, job_id)
+            VALUES (%s, %s, to_timestamp(%s), %s, %s::vector, %s, %s::jsonb, %s)
             """,
             (
                 person_id,
@@ -97,6 +99,7 @@ def handle(
                 str(embedding_list),
                 crop_path,
                 str(bbox_list),
+                job_id,
             ),
         )
 

@@ -1,9 +1,5 @@
-"""
-Central configuration. Reads all values from .env via pydantic-settings.
-Every tunable threshold, path, and camera setting lives here.
-No other file reads environment variables directly.
-"""
 from typing import Optional
+from pathlib import Path
 from pydantic_settings import BaseSettings
 
 
@@ -43,11 +39,13 @@ class Settings(BaseSettings):
     retention_window_days: int = 2
     crop_storage_dir: str = "./data/crops"
 
+    # Ingestion
+    chunk_duration_minutes: int = 5
+    ingest_workers: int = 2
+    ingest_dir: str = "./data/ingest"
+
     # Database
-    postgres_user: str = "facetrack"
-    postgres_password: str = "changeme"
-    postgres_db: str = "facetrack"
-    database_url: str = "postgresql+asyncpg://facetrack:changeme@localhost:5432/facetrack"
+    database_url: str = "postgresql+asyncpg://postgres:Shashank123@localhost:5432/facetrack"
 
     # RTSP
     rtsp_buffer_size: int = 1
@@ -87,7 +85,10 @@ class Settings(BaseSettings):
             return int(self.camera_source)
         return self.camera_source
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": str(Path(__file__).resolve().parent.parent / ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
 
 settings = Settings()

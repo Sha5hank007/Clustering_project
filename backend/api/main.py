@@ -6,7 +6,7 @@ Run: uvicorn api.main:app --reload --port 8000
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import identify, persons, crops, stats
+from api.routers import identify, persons, crops, stats, ingest
 from api.deps import get_detector, get_embedder
 
 logging.basicConfig(
@@ -32,6 +32,7 @@ app.include_router(identify.router, prefix="/api")
 app.include_router(persons.router, prefix="/api")
 app.include_router(crops.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
+app.include_router(ingest.router, prefix="/api")
 
 
 @app.on_event("startup")
