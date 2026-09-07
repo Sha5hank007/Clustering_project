@@ -203,6 +203,12 @@ class Tracker:
             track.predict_bbox()
         return []
 
+    def flush_all(self) -> list[Track]:
+        """Flush and return all active tracks that have at least one crop."""
+        tracks = [t for t in self.active_tracks if len(t.crops) > 0]
+        self.active_tracks = []
+        return tracks
+
 
 def _compute_iou_matrix(
     bboxes_a: np.ndarray, bboxes_b: np.ndarray
