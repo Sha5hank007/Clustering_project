@@ -2,8 +2,7 @@
 Ingest worker. Processes uploaded videos in chunks with resume.
 Run as: python -m pipeline.ingest_worker
 
-Reads every frame (cheap at 720p), processes every Nth (FPS sampling).
-No grab() — OpenCV's mp4v codec makes grab() as slow as read().
+Now reads shop_id from job and passes it through the pipeline.
 """
 import os
 import time
@@ -37,7 +36,7 @@ def pick_next_job(conn) -> dict | None:
         cur.execute(
             """
             SELECT id, video_path, camera_id, recorded_at,
-                   fps, total_frames, processed_frame
+                   fps, total_frames, processed_frame, shop_id
             FROM ingest_jobs
             WHERE status IN ('processing', 'queued')
             ORDER BY
@@ -61,16 +60,18 @@ def pick_next_job(conn) -> dict | None:
             "id": row[0], "video_path": row[1], "camera_id": row[2],
             "recorded_at": row[3], "fps": row[4],
             "total_frames": row[5], "processed_frame": row[6] or 0,
+            "shop_id": row[7],
         }
 
 
 def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
     job_id = job["id"]
+    shop_id = job["shop_id"]
     conn = get_connection()
 
     logger.info(
-        "Processing job %s: %s (camera=%s, resume from frame %d)"
-        % (job_id, job["video_path"], job["camera_id"], job["processed_frame"])
+        "Processing job %s: %s (camera=%s, shop=%d, resume from frame %d)"
+        % (job_id, job["video_path"], job["camera_id"], shop_id, job["processed_frame"])
     )
 
     try:
@@ -82,29 +83,45 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
 
         # Set video metadata
         if job["fps"] is None:
+            raw_fps = source.fps
+            raw_frames = source.total_frames
+
+            logger.info("Raw video metadata: fps=%s (%s), total_frames=%s (%s)" % (
+                raw_fps, type(raw_fps).__name__, raw_frames, type(raw_frames).__name__))
+
+            fps_val = float(raw_fps) if raw_fps and raw_fps > 0 else 25.0
+            total_val = int(raw_frames) if raw_frames and 0 < raw_frames < 2_000_000_000 else 0
+
+            if total_val == 0:
+                logger.info("Frame count unknown, counting manually...")
+                total_val = 0
+                while source.cap.grab():
+                    total_val += 1
+                source.seek_to_frame(0)
+                logger.info("Counted %d frames" % total_val)
+
+            logger.info("Using: fps=%.1f, total_frames=%d" % (fps_val, total_val))
+
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE ingest_jobs SET fps = %s, total_frames = %s WHERE id = %s",
-                    (source.fps, source.total_frames, job_id),
+                    (fps_val, total_val, job_id),
                 )
             conn.commit()
-            job["fps"] = source.fps
-            job["total_frames"] = source.total_frames
+            job["fps"] = fps_val
+            job["total_frames"] = total_val
 
         # Resume from last checkpoint
         if job["processed_frame"] > 0:
             source.seek_to_frame(job["processed_frame"])
             logger.info("Resumed from frame %d" % job["processed_frame"])
 
-        video_fps = source.fps or 25
+        video_fps = job["fps"] or source.fps or 25
 
-        # Process every Nth frame. Read all, skip processing on the rest.
-        # At 720p read() is ~5ms. No grab() — mp4v codec makes it equally slow.
         sample_every = max(1, int(video_fps / settings.fps_sample_rate))
         logger.info(
-            "Video: %.0ffps, %dx%d, %d frames | Processing every %dth frame"
-            % (video_fps, source._total_frames, source._total_frames,
-               source.total_frames, sample_every)
+            "Video: %.0ffps, %d frames | Processing every %dth frame | Shop %d"
+            % (video_fps, job["total_frames"] or 0, sample_every, shop_id)
         )
 
         chunk_frames = int(settings.chunk_duration_minutes * 60 * video_fps)
@@ -122,17 +139,15 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
             ok, frame, timestamp = source.read()
             if not ok:
                 sightings_added += _flush_tracks(
-                    tracker, embedder, job["camera_id"], conn, job_id, persons_found
+                    tracker, embedder, job["camera_id"], conn, job_id, shop_id, persons_found
                 )
                 break
 
             frames_read += 1
 
-            # Skip non-sampled frames
             if frames_read % sample_every != 0:
                 continue
 
-            # Resize if needed
             h, w = frame.shape[:2]
             if w > 1280:
                 scale = 1280 / w
@@ -150,8 +165,24 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
                 dead_tracks = tracker.predict()
 
             for track in dead_tracks:
-                if _process_track(track, embedder, job["camera_id"], conn, job_id, persons_found):
+                if _process_track(track, embedder, job["camera_id"], conn, job_id, shop_id, persons_found):
                     sightings_added += 1
+
+            # Check for pause/cancel
+            if frames_processed % 200 == 0:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT status FROM ingest_jobs WHERE id = %s", (job_id,))
+                    current_status = cur.fetchone()[0]
+                if current_status == "paused":
+                    logger.info("Job %s paused by user" % job_id)
+                    _flush_tracks(tracker, embedder, job["camera_id"], conn, job_id, shop_id, persons_found)
+                    _update_progress(conn, job_id, source.current_frame, len(persons_found), sightings_added)
+                    source.release()
+                    return
+                if current_status == "cancelled":
+                    logger.info("Job %s cancelled by user" % job_id)
+                    source.release()
+                    return
 
             # Log every 10 seconds
             now = time.time()
@@ -168,7 +199,7 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
             current = source.current_frame
             if current - chunk_start >= chunk_frames:
                 sightings_added += _flush_tracks(
-                    tracker, embedder, job["camera_id"], conn, job_id, persons_found
+                    tracker, embedder, job["camera_id"], conn, job_id, shop_id, persons_found
                 )
                 tracker = Tracker()
                 _update_progress(conn, job_id, current, len(persons_found), sightings_added)
@@ -216,17 +247,17 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
         conn.close()
 
 
-def _process_track(track, embedder, camera_id, conn, job_id, persons_found) -> bool:
+def _process_track(track, embedder, camera_id, conn, job_id, shop_id, persons_found) -> bool:
     try:
         embedding = embedder.embed(track.crops)
-        person_id = matcher.match_or_create(embedding, track.best_crop.timestamp)
+        person_id = matcher.match_or_create(embedding, track.best_crop.timestamp, shop_id)
         persons_found.add(person_id)
         should_insert = cooldown.check(person_id, camera_id, track.best_crop.timestamp, conn)
         if should_insert:
             retention.handle(
                 person_id=person_id, embedding=embedding, crop_info=track.best_crop,
                 camera_id=camera_id, timestamp=track.best_crop.timestamp,
-                conn=conn, job_id=job_id,
+                conn=conn, shop_id=shop_id, job_id=job_id,
             )
             return True
         return False
@@ -239,10 +270,10 @@ def _process_track(track, embedder, camera_id, conn, job_id, persons_found) -> b
         return False
 
 
-def _flush_tracks(tracker, embedder, camera_id, conn, job_id, persons_found) -> int:
+def _flush_tracks(tracker, embedder, camera_id, conn, job_id, shop_id, persons_found) -> int:
     count = 0
     for track in [t for t in tracker.active_tracks if len(t.crops) > 0]:
-        if _process_track(track, embedder, camera_id, conn, job_id, persons_found):
+        if _process_track(track, embedder, camera_id, conn, job_id, shop_id, persons_found):
             count += 1
     return count
 

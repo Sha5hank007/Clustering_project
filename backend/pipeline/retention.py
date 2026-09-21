@@ -1,10 +1,5 @@
 """
-Image retention policy + sighting insertion.
-
-Controls which sightings get a saved face crop on disk.
-Rule: one best crop per person per RETENTION_WINDOW_DAYS.
-
-Also handles the actual INSERT into the sightings table.
+Image retention policy + sighting insertion, scoped to a shop.
 """
 import os
 import logging
@@ -25,25 +20,15 @@ def handle(
     camera_id: str,
     timestamp: float,
     conn,
+    shop_id: int,
     job_id: str | None = None,
 ) -> None:
     """
     Insert a sighting row and optionally save a face crop to disk.
-
-    Args:
-        person_id: matched person
-        embedding: 512-d vector for this track
-        crop_info: best crop from the track
-        camera_id: which camera
-        timestamp: when
-        conn: psycopg2 connection
-        job_id: which ingest job produced this (None for live worker)
     """
-    # Determine date bucket
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     bucket = dt.toordinal() // settings.retention_window_days
 
-    # Check if a crop already exists for this person in this bucket
     crop_path = None
     should_save = False
 
@@ -67,31 +52,28 @@ def handle(
         existing = cur.fetchone()
 
         if existing is None:
-            # No crop for this bucket yet — save this one
             should_save = True
         elif crop_info.quality_score > (existing[2] or 0):
-            # New crop is better — replace the old one
             old_path = existing[1]
             if old_path and os.path.exists(old_path):
                 os.remove(old_path)
-                logger.debug(f"Replaced lower-quality crop: {old_path}")
             should_save = True
 
         if should_save:
             crop_path = _save_crop(person_id, crop_info.crop, timestamp)
 
-        # Insert sighting row
         bbox_list = crop_info.bbox.tolist()
         embedding_list = embedding.tolist()
 
         cur.execute(
             """
             INSERT INTO sightings
-                (person_id, camera_id, seen_at, quality_score,
+                (shop_id, person_id, camera_id, seen_at, quality_score,
                  embedding, crop_path, bbox, job_id)
-            VALUES (%s, %s, to_timestamp(%s), %s, %s::vector, %s, %s::jsonb, %s)
+            VALUES (%s, %s, %s, to_timestamp(%s), %s, %s::vector, %s, %s::jsonb, %s)
             """,
             (
+                shop_id,
                 person_id,
                 camera_id,
                 timestamp,
@@ -105,30 +87,22 @@ def handle(
 
     conn.commit()
     logger.info(
-        f"Sighting inserted: person={person_id} camera={camera_id} "
-        f"crop={'saved' if crop_path else 'skipped'}"
+        "Sighting inserted: person=%d camera=%s shop=%d crop=%s"
+        % (person_id, camera_id, shop_id, "saved" if crop_path else "skipped")
     )
 
 
-def _save_crop(person_id: int, crop: np.ndarray, timestamp: float) -> str:
-    """
-    Save a face crop to disk.
-
-    Structure: data/crops/person_{id}/{date}.jpg
-    Returns the file path (stored in sightings.crop_path).
-    """
+def _save_crop(person_id, crop, timestamp):
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     date_str = dt.strftime("%Y-%m-%d_%H%M%S")
 
-    person_dir = os.path.join(settings.crop_storage_dir, f"person_{person_id}")
+    person_dir = os.path.join(settings.crop_storage_dir, "person_%d" % person_id)
     os.makedirs(person_dir, exist_ok=True)
 
-    filename = f"{date_str}.jpg"
+    filename = "%s.jpg" % date_str
     filepath = os.path.join(person_dir, filename)
 
-    # Resize to 112x112 for consistency and storage efficiency
     resized = cv2.resize(crop, (112, 112))
     cv2.imwrite(filepath, resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-    logger.debug(f"Saved crop: {filepath}")
     return filepath

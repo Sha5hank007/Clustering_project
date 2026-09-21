@@ -1,14 +1,14 @@
 """
-POST /api/ingest          — upload a video for processing
-GET  /api/ingest/status/{job_id}  — check processing progress
-GET  /api/ingest/jobs     — list all jobs
+POST /api/ingest              — upload video (requires auth, scoped to user's shop)
+GET  /api/ingest/status/{id}  — check job progress (own shop or admin)
+GET  /api/ingest/jobs         — list jobs (own shop or all for admin)
 """
 import os
 import uuid
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
-from api.deps import get_db
+from api.deps import get_db, get_current_user, get_current_scope, CurrentUser, Scope
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -20,12 +20,12 @@ def upload_video(
     video: UploadFile = File(...),
     camera_id: str = Form(...),
     recorded_at: str = Form(...),
+    user: CurrentUser = Depends(get_current_user),
     db=Depends(get_db),
 ):
-    """
-    Upload a video. Saves file, queues job, returns immediately.
-    Downscaling and processing happen in the background worker.
-    """
+    if not user.shop_id:
+        raise HTTPException(400, "Admin must specify a shop. Use /admin endpoints to manage shops.")
+
     try:
         rec_dt = datetime.fromisoformat(recorded_at)
         if rec_dt.tzinfo is None:
@@ -36,7 +36,6 @@ def upload_video(
     job_id = uuid.uuid4().hex[:12]
     os.makedirs(settings.ingest_dir, exist_ok=True)
 
-    # Save video as-is — no processing, no downscaling
     ext = os.path.splitext(video.filename)[1] or ".mp4"
     video_path = os.path.join(settings.ingest_dir, "%s%s" % (job_id, ext))
 
@@ -48,42 +47,46 @@ def upload_video(
             f.write(chunk)
 
     file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-    logger.info(
-        "Video uploaded: job=%s file=%s (%.1f MB) camera=%s"
-        % (job_id, video.filename, file_size_mb, camera_id)
-    )
 
     cur = db.cursor()
     cur.execute(
         """
-        INSERT INTO ingest_jobs (id, original_name, video_path, camera_id, recorded_at, status)
-        VALUES (%s, %s, %s, %s, %s, 'queued')
+        INSERT INTO ingest_jobs (id, shop_id, uploaded_by, original_name, video_path,
+                                 camera_id, recorded_at, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued')
         """,
-        (job_id, video.filename, video_path, camera_id, rec_dt),
+        (job_id, user.shop_id, user.user_id, video.filename, video_path, camera_id, rec_dt),
     )
     db.commit()
+
+    logger.info("Video uploaded: job=%s shop=%d user=%d" % (job_id, user.shop_id, user.user_id))
 
     return {
         "job_id": job_id,
         "status": "queued",
         "original_name": video.filename,
         "camera_id": camera_id,
-        "recorded_at": rec_dt.isoformat(),
         "file_size_mb": round(file_size_mb, 2),
     }
 
 
 @router.get("/ingest/status/{job_id}")
-def get_job_status(job_id: str, db=Depends(get_db)):
+def get_job_status(
+    job_id: str,
+    scope: Scope = Depends(get_current_scope),
+    db=Depends(get_db),
+):
+    clause, params = scope.sql_filter("j.shop_id")
     cur = db.cursor()
     cur.execute(
         """
-        SELECT id, original_name, camera_id, recorded_at, fps,
-               total_frames, processed_frame, status, error,
-               persons_found, sightings_added, created_at
-        FROM ingest_jobs WHERE id = %s
-        """,
-        (job_id,),
+        SELECT j.id, j.original_name, j.camera_id, j.recorded_at, j.fps,
+               j.total_frames, j.processed_frame, j.status, j.error,
+               j.persons_found, j.sightings_added, j.created_at
+        FROM ingest_jobs j
+        WHERE j.id = %%s AND %s
+        """ % clause,
+        [job_id] + params,
     )
     row = cur.fetchone()
     if not row:
@@ -104,15 +107,22 @@ def get_job_status(job_id: str, db=Depends(get_db)):
 
 
 @router.get("/ingest/jobs")
-def list_jobs(db=Depends(get_db)):
+def list_jobs(
+    scope: Scope = Depends(get_current_scope),
+    db=Depends(get_db),
+):
+    clause, params = scope.sql_filter("j.shop_id")
     cur = db.cursor()
     cur.execute(
         """
-        SELECT id, original_name, camera_id, recorded_at,
-               total_frames, processed_frame, status,
-               persons_found, sightings_added, created_at
-        FROM ingest_jobs ORDER BY created_at DESC
-        """,
+        SELECT j.id, j.original_name, j.camera_id, j.recorded_at,
+               j.total_frames, j.processed_frame, j.status,
+               j.persons_found, j.sightings_added, j.created_at
+        FROM ingest_jobs j
+        WHERE %s
+        ORDER BY j.created_at DESC
+        """ % clause,
+        params,
     )
 
     jobs = []

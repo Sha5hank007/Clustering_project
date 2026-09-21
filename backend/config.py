@@ -54,6 +54,10 @@ class Settings(BaseSettings):
 
     # Debug
     debug_display: bool = True
+    
+    # Auth
+    jwt_secret: str = "change-this-to-a-random-string"
+    jwt_expiry_hours: int = 24
 
     @property
     def det_size_tuple(self) -> tuple[int, int]:
@@ -86,7 +90,7 @@ class Settings(BaseSettings):
         return self.camera_source
 
     model_config = {
-        "env_file": str(Path(__file__).resolve().parent.parent / ".env"),
+        "env_file": str(Path(__file__).resolve().parent / ".env"),
         "env_file_encoding": "utf-8",
     }
 
