@@ -96,3 +96,7 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS users;")
     op.execute("DROP TABLE IF EXISTS shops;")
     op.execute("DROP TABLE IF EXISTS tenants;")
+    
+    # ── 5. Reset sequences after manual inserts ──
+    op.execute("SELECT setval('tenants_id_seq', (SELECT COALESCE(MAX(id), 1) FROM tenants));")
+    op.execute("SELECT setval('shops_id_seq', (SELECT COALESCE(MAX(id), 1) FROM shops));")
