@@ -1,287 +1,72 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Users,
-  Search,
-  Filter,
-  RefreshCw,
-  AlertCircle,
-  X,
-  Clock,
-  Camera,
-  Layers,
-  ChevronLeft,
-} from 'lucide-react';
-import { PersonCard } from '../components/PersonCard';
-import { SightingTimeline } from '../components/SightingTimeline';
-import { CropGrid } from '../components/CropGrid';
-import { getPersons, getPerson, updatePersonLabel, deletePerson } from '../api/client';
-import { Person, PersonDetail } from '../types';
+import { useEffect, useState } from 'react';
+import { useSearchParams, Link } from 'react-router-dom';
+import api from '../api/client';
+import { cropUrl } from '../api/utils';
+import { Person } from '../types';
+import AuthenticatedImage from '../components/AuthenticatedImage';
 
-export const PersonsPage: React.FC = () => {
+export default function PersonsPage() {
+  const [searchParams] = useSearchParams();
+  const jobId = searchParams.get('job_id');
   const [persons, setPersons] = useState<Person[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [labeledOnly, setLabeledOnly] = useState(false);
-  
-  // Selected Person detail modal
-  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
-  const [selectedPersonDetail, setSelectedPersonDetail] = useState<PersonDetail | null>(null);
-  const [isDetailLoading, setIsDetailLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<'timeline' | 'crops'>('timeline');
-
-  const fetchPersonsList = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getPersons({
-        search: searchQuery.trim() || undefined,
-        labeled_only: labeledOnly,
-      });
-      setPersons(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load persons directory.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    fetchPersonsList();
-  }, [labeledOnly]);
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    fetchPersonsList();
-  };
-
-  const handleOpenDetail = async (id: number) => {
-    setSelectedPersonId(id);
-    setIsDetailLoading(true);
-    try {
-      const detail = await getPerson(id);
-      setSelectedPersonDetail(detail);
-    } catch (err: any) {
-      alert(`Could not load person details: ${err.message}`);
-      setSelectedPersonId(null);
-    } finally {
-      setIsDetailLoading(false);
-    }
-  };
-
-  const handleCloseDetail = () => {
-    setSelectedPersonId(null);
-    setSelectedPersonDetail(null);
-  };
-
-  const handleUpdateLabel = async (id: number, newLabel: string) => {
-    await updatePersonLabel(id, newLabel);
-    setPersons((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, label: newLabel || null } : p))
-    );
-    if (selectedPersonDetail && selectedPersonDetail.id === id) {
-      setSelectedPersonDetail({
-        ...selectedPersonDetail,
-        label: newLabel || null,
-      });
-    }
-  };
-
-  const handleDeletePerson = async (id: number) => {
-    await deletePerson(id);
-    setPersons((prev) => prev.filter((p) => p.id !== id));
-    if (selectedPersonId === id) {
-      handleCloseDetail();
-    }
-  };
+    const params: any = { page, limit: 12 };
+    if (jobId) params.job_id = jobId;
+    api.get('/persons', { params }).then(r => { setPersons(r.data.persons); setTotalPages(r.data.total_pages); setTotal(r.data.total); });
+  }, [page, jobId]);
 
   return (
-    <div className="page-container persons-page animate-fade-in">
-      <div className="page-header">
-        <div className="page-title-group">
-          <h2 className="page-title">Known Persons Database</h2>
-          <p className="page-subtitle">
-            All facial identity centroids stored in pgvector with multi-camera sighting history
-          </p>
-        </div>
-
-        <button className="btn-secondary" onClick={fetchPersonsList} disabled={isLoading}>
-          <RefreshCw size={14} className={isLoading ? 'spinning' : ''} />
-          <span>Refresh</span>
-        </button>
+    <div style={s.container}>
+      <div style={s.header}>
+        <h1 style={s.title}>{jobId ? 'Persons from Video' : 'All Persons'}</h1>
+        <span style={s.count}>{total} found</span>
       </div>
-
-      {/* Filter and Search Bar */}
-      <div className="filter-bar glass-panel">
-        <form onSubmit={handleSearchSubmit} className="search-form">
-          <div className="search-input-box">
-            <Search size={16} className="search-icon" />
-            <input
-              type="text"
-              placeholder="Search by person name / label..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="search-input"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="clear-search-btn"
-                onClick={() => {
-                  setSearchQuery('');
-                  fetchPersonsList();
-                }}
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-          <button type="submit" className="btn-primary-sm">
-            Search
-          </button>
-        </form>
-
-        <div className="filter-options">
-          <button
-            type="button"
-            className={`filter-pill ${labeledOnly ? 'active' : ''}`}
-            onClick={() => setLabeledOnly(!labeledOnly)}
-          >
-            <Filter size={13} />
-            <span>Labeled Only</span>
-          </button>
-          <span className="total-badge">{persons.length} Persons</span>
-        </div>
-      </div>
-
-      {/* Error state */}
-      {error && (
-        <div className="error-card glass-panel animate-fade-in">
-          <AlertCircle size={24} className="error-icon" />
-          <div className="error-details">
-            <h4>Error Loading Database</h4>
-            <p>{error}</p>
-          </div>
-          <button className="btn-secondary-sm" onClick={fetchPersonsList}>
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Loading state */}
-      {isLoading && (
-        <div className="loading-grid glass-panel">
-          <div className="spinner"></div>
-          <p>Querying PostgreSQL & pgvector centroids...</p>
-        </div>
-      )}
-
-      {/* Grid of Persons */}
-      {!isLoading && !error && persons.length > 0 && (
-        <div className="persons-grid">
-          {persons.map((person) => (
-            <PersonCard
-              key={person.id}
-              person={person}
-              onSelect={handleOpenDetail}
-              onUpdateLabel={handleUpdateLabel}
-              onDelete={handleDeletePerson}
-            />
+      {persons.length === 0 ? (
+        <div style={s.empty}><p>No persons found.</p>{!jobId && <p><Link to="/ingest" style={s.link}>Upload a video</Link> to get started.</p>}</div>
+      ) : (
+        <div style={s.grid}>
+          {persons.map(p => (
+            <Link to={`/persons/${p.id}${jobId ? `?job_id=${jobId}` : ''}`} key={p.id} style={s.card}>
+              {p.latest_crop_url ? <AuthenticatedImage src={cropUrl(p.latest_crop_url)} alt="" style={s.img} /> : <div style={s.noImg}>No image</div>}
+              <div style={s.info}>
+                <div style={s.name}>{p.label || `Person #${p.id}`}</div>
+                <div style={s.meta}>{p.sighting_count} sightings</div>
+                <div style={s.meta}>{p.last_seen ? new Date(p.last_seen).toLocaleDateString() : ''}</div>
+              </div>
+            </Link>
           ))}
         </div>
       )}
-
-      {/* Empty State */}
-      {!isLoading && !error && persons.length === 0 && (
-        <div className="empty-state glass-panel animate-fade-in">
-          <Users size={48} className="empty-icon" />
-          <h3>No Persons Found</h3>
-          <p>
-            {searchQuery || labeledOnly
-              ? 'No identity records match your search criteria.'
-              : 'No persons recorded in the database yet. Upload a video in the Ingestion tab or identify a suspect.'}
-          </p>
-        </div>
-      )}
-
-      {/* Detail Modal */}
-      {selectedPersonId && (
-        <div className="modal-backdrop" onClick={handleCloseDetail}>
-          <div className="modal-container glass-panel animate-fade-in" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div className="modal-title-row">
-                <button className="modal-back-btn" onClick={handleCloseDetail}>
-                  <ChevronLeft size={20} />
-                </button>
-                <div>
-                  <h3 className="modal-title">
-                    {selectedPersonDetail?.label || `Person #${selectedPersonId}`}
-                  </h3>
-                  <span className="modal-sub">ID: #{selectedPersonId} • ArcFace 512-d Centroid</span>
-                </div>
-              </div>
-              <button className="modal-close-btn" onClick={handleCloseDetail}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="modal-body">
-              {isDetailLoading ? (
-                <div className="modal-loading">
-                  <div className="spinner"></div>
-                  <p>Loading sighting history...</p>
-                </div>
-              ) : selectedPersonDetail ? (
-                <div className="detail-content">
-                  <div className="detail-summary-bar">
-                    <div className="detail-stat">
-                      <span className="stat-label">Total Sightings</span>
-                      <span className="stat-value">{selectedPersonDetail.sighting_count}</span>
-                    </div>
-                    <div className="detail-stat">
-                      <span className="stat-label">First Seen</span>
-                      <span className="stat-value">
-                        {new Date(selectedPersonDetail.first_seen).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <div className="detail-stat">
-                      <span className="stat-label">Last Seen</span>
-                      <span className="stat-value">
-                        {new Date(selectedPersonDetail.last_seen).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="detail-tabs">
-                    <button
-                      className={`detail-tab-btn ${detailTab === 'timeline' ? 'active' : ''}`}
-                      onClick={() => setDetailTab('timeline')}
-                    >
-                      <Clock size={14} />
-                      <span>Timeline Events ({selectedPersonDetail.sightings.length})</span>
-                    </button>
-                    <button
-                      className={`detail-tab-btn ${detailTab === 'crops' ? 'active' : ''}`}
-                      onClick={() => setDetailTab('crops')}
-                    >
-                      <Layers size={14} />
-                      <span>Archived Crops</span>
-                    </button>
-                  </div>
-
-                  <div className="detail-tab-view">
-                    {detailTab === 'timeline' ? (
-                      <SightingTimeline sightings={selectedPersonDetail.sightings} />
-                    ) : (
-                      <CropGrid sightings={selectedPersonDetail.sightings} />
-                    )}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
+      {totalPages > 1 && (
+        <div style={s.pagination}>
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={s.pageBtn}>← Prev</button>
+          <span style={s.pageInfo}>Page {page} of {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={s.pageBtn}>Next →</button>
         </div>
       )}
     </div>
   );
+}
+
+const s: Record<string, React.CSSProperties> = {
+  container: { padding: 28, maxWidth: 1100, margin: '0 auto' },
+  header: { display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 },
+  title: { color: '#1e293b', margin: 0, fontWeight: 700 },
+  count: { color: '#94a3b8', fontSize: 14 },
+  empty: { color: '#94a3b8', background: '#fff', padding: 40, borderRadius: 12, textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  link: { color: '#2563eb' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16 },
+  card: { background: '#fff', borderRadius: 12, overflow: 'hidden', textDecoration: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', transition: 'box-shadow 0.2s' },
+  img: { width: '100%', height: 170, objectFit: 'cover' },
+  noImg: { width: '100%', height: 170, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#cbd5e1', fontSize: 13 },
+  info: { padding: 12 },
+  name: { color: '#1e293b', fontWeight: 600, fontSize: 14, marginBottom: 4 },
+  meta: { color: '#94a3b8', fontSize: 12 },
+  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 28 },
+  pageBtn: { padding: '8px 18px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#fff', color: '#475569', cursor: 'pointer', fontSize: 13, fontWeight: 500 },
+  pageInfo: { color: '#94a3b8', fontSize: 13 },
 };

@@ -1,211 +1,89 @@
-import React, { useState } from 'react';
-import {
-  ShieldAlert,
-  Search,
-  Sparkles,
-  AlertCircle,
-  RefreshCw,
-  Clock,
-  Camera,
-  Grid,
-  List,
-} from 'lucide-react';
-import { ImageUpload } from '../components/ImageUpload';
-import { PersonCard } from '../components/PersonCard';
-import { SightingTimeline } from '../components/SightingTimeline';
-import { CropGrid } from '../components/CropGrid';
-import { identifyFace, updatePersonLabel } from '../api/client';
-import { IdentificationResponse } from '../types';
+import { useState } from 'react';
+import api from '../api/client';
+import { cropUrl } from '../api/utils';
+import { IdentifyResult } from '../types';
+import AuthenticatedImage from '../components/AuthenticatedImage';
 
-export const IdentifyPage: React.FC = () => {
+export default function IdentifyPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<IdentificationResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'timeline' | 'grid'>('timeline');
+  const [preview, setPreview] = useState<string | null>(null);
+  const [result, setResult] = useState<IdentifyResult | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleImageSelected = (selectedFile: File) => {
-    setFile(selectedFile);
-    setError(null);
-    setResult(null);
+  const handleFile = (f: File | null) => {
+    setFile(f); setResult(null); setError('');
+    if (f) { const r = new FileReader(); r.onload = e => setPreview(e.target?.result as string); r.readAsDataURL(f); }
+    else setPreview(null);
   };
 
-  const handleIdentify = async () => {
+  const handleSearch = async () => {
     if (!file) return;
-    setIsLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const data = await identifyFace(file);
-      setResult(data);
-    } catch (err: any) {
-      setError(err.message || 'An error occurred during facial identification.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleReset = () => {
-    setFile(null);
-    setResult(null);
-    setError(null);
-  };
-
-  const handleUpdateLabel = async (personId: number, newLabel: string) => {
-    await updatePersonLabel(personId, newLabel);
-    if (result && result.person_id === personId) {
-      setResult({
-        ...result,
-        label: newLabel || `Person #${personId}`,
-      });
-    }
+    setLoading(true); setError(''); setResult(null);
+    try { const form = new FormData(); form.append('image', file); const res = await api.post('/identify', form); setResult(res.data); }
+    catch (err: any) { setError(err.response?.data?.detail || 'Identification failed'); }
+    finally { setLoading(false); }
   };
 
   return (
-    <div className="page-container identify-page animate-fade-in">
-      <div className="page-header">
-        <div className="page-title-group">
-          <h2 className="page-title">Forensic Face Identification</h2>
-          <p className="page-subtitle">
-            Upload a suspect photo to extract 512-d ArcFace embeddings and query sighting history
-          </p>
+    <div style={s.container}>
+      <h1 style={s.title}>Identify Person</h1>
+      <p style={s.desc}>Upload a photo of a person to find all their sightings across your footage.</p>
+      <div style={s.uploadRow}>
+        <div style={s.dropZone} onClick={() => document.getElementById('id-file')?.click()}>
+          {preview ? <img src={preview} alt="" style={s.previewImg} /> : <div style={s.dropText}>Click to upload photo</div>}
+          <input id="id-file" type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleFile(e.target.files?.[0] || null)} />
         </div>
+        <button onClick={handleSearch} disabled={!file || loading} style={s.searchBtn}>{loading ? 'Searching...' : '🔍 Search'}</button>
       </div>
-
-      <div className="identify-layout">
-        {/* Left / Top panel: Upload & Query Controls */}
-        <section className="query-panel glass-panel">
-          <div className="section-header-compact">
-            <Search size={16} />
-            <span>Target Image</span>
+      {error && <div style={s.error}>{error}</div>}
+      {result && (
+        <div>
+          <div style={s.matchCard}>
+            <h2 style={s.matchName}>{result.label || `Person #${result.person_id}`}</h2>
+            <div style={s.matchStats}>
+              <span style={s.simBadge}>{(result.similarity * 100).toFixed(1)}% match</span>
+              <span>{result.total_sightings} sightings</span>
+              <span>First: {result.first_seen ? new Date(result.first_seen).toLocaleString() : 'N/A'}</span>
+              <span>Last: {result.last_seen ? new Date(result.last_seen).toLocaleString() : 'N/A'}</span>
+            </div>
           </div>
-
-          <ImageUpload onImageSelected={handleImageSelected} isLoading={isLoading} />
-
-          {file && !result && (
-            <div className="query-action-row animate-fade-in">
-              <button
-                className="btn-primary glow-btn"
-                onClick={handleIdentify}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <>
-                    <RefreshCw size={16} className="spinning" />
-                    <span>Analyzing Embeddings...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={16} />
-                    <span>Run Forensic Search</span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
-          {isLoading && (
-            <div className="identifying-indicator glass-panel animate-fade-in">
-              <div className="radar-spinner"></div>
-              <div className="identifying-text">
-                <strong>Detecting facial keypoints (SCRFD)...</strong>
-                <span>Matching against database person centroids</span>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="error-card glass-panel animate-fade-in">
-              <AlertCircle size={24} className="error-icon" />
-              <div className="error-details">
-                <h4>Match Query Failed</h4>
-                <p>{error}</p>
-              </div>
-              <button className="btn-secondary-sm" onClick={handleReset}>
-                Try Another Photo
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* Right / Results Panel */}
-        {result && (
-          <section className="results-panel animate-fade-in">
-            <div className="results-header glass-panel">
-              <div className="match-banner">
-                <ShieldAlert size={24} className="match-shield-icon" />
-                <div className="match-banner-text">
-                  <h3>Identity Match Confirmed</h3>
-                  <p>
-                    Cosine similarity score is{' '}
-                    <strong>{(result.similarity * 100).toFixed(1)}%</strong>
-                  </p>
+          <h3 style={s.sightTitle}>Sighting History</h3>
+          <div style={s.sGrid}>
+            {result.sightings.map(si => (
+              <div key={si.id} style={s.sCard}>
+                {si.crop_url ? <AuthenticatedImage src={cropUrl(si.crop_url)} alt="" style={s.sImg} /> : <div style={s.sNoImg}>No crop</div>}
+                <div style={s.sInfo}>
+                  <div style={{ color: '#1e293b', fontSize: 13, fontWeight: 600 }}>{si.seen_at ? new Date(si.seen_at).toLocaleString() : ''}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>📹 {si.camera_id}</div>
                 </div>
               </div>
-
-              <div className="results-actions">
-                <div className="view-toggle">
-                  <button
-                    className={`toggle-btn ${viewMode === 'timeline' ? 'active' : ''}`}
-                    onClick={() => setViewMode('timeline')}
-                    title="Timeline View"
-                  >
-                    <List size={16} />
-                    <span>Timeline</span>
-                  </button>
-                  <button
-                    className={`toggle-btn ${viewMode === 'grid' ? 'active' : ''}`}
-                    onClick={() => setViewMode('grid')}
-                    title="Crops Gallery"
-                  >
-                    <Grid size={16} />
-                    <span>Crops</span>
-                  </button>
-                </div>
-
-                <button className="btn-secondary" onClick={handleReset}>
-                  <RefreshCw size={14} />
-                  <span>New Search</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Profile summary card */}
-            <div className="matched-person-wrapper">
-              <PersonCard
-                person={{
-                  id: result.person_id,
-                  label: result.label,
-                  sighting_count: result.total_sightings,
-                  first_seen: result.first_seen,
-                  last_seen: result.last_seen,
-                  thumbnail_url: result.sightings[0]?.crop_url,
-                }}
-                similarity={result.similarity}
-                onUpdateLabel={handleUpdateLabel}
-              />
-            </div>
-
-            {/* Sighting History Section */}
-            <div className="sighting-history-box glass-panel">
-              <div className="history-header">
-                <div className="history-title">
-                  <Clock size={18} />
-                  <h3>Recorded Sighting History</h3>
-                  <span className="count-pill">{result.sightings.length} events</span>
-                </div>
-              </div>
-
-              {viewMode === 'timeline' ? (
-                <SightingTimeline sightings={result.sightings} />
-              ) : (
-                <CropGrid sightings={result.sightings} />
-              )}
-            </div>
-          </section>
-        )}
-      </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+const s: Record<string, React.CSSProperties> = {
+  container: { padding: 28, maxWidth: 900, margin: '0 auto' },
+  title: { color: '#1e293b', marginBottom: 4, fontWeight: 700 },
+  desc: { color: '#94a3b8', fontSize: 14, marginBottom: 20 },
+  uploadRow: { display: 'flex', gap: 16, alignItems: 'flex-start', marginBottom: 20 },
+  dropZone: { width: 200, height: 200, background: '#fff', borderRadius: 12, border: '2px dashed #e2e8f0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  dropText: { color: '#cbd5e1', fontSize: 13, textAlign: 'center', padding: 20 },
+  previewImg: { width: '100%', height: '100%', objectFit: 'cover' },
+  searchBtn: { padding: '12px 32px', borderRadius: 8, border: 'none', background: '#2563eb', color: '#fff', fontSize: 15, cursor: 'pointer', fontWeight: 600 },
+  error: { background: '#fef2f2', color: '#dc2626', padding: 12, borderRadius: 8, marginBottom: 16, fontSize: 14, border: '1px solid #fecaca' },
+  matchCard: { background: '#fff', padding: 20, borderRadius: 12, marginBottom: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  matchName: { color: '#1e293b', margin: '0 0 12px', fontWeight: 700 },
+  matchStats: { display: 'flex', gap: 20, color: '#64748b', fontSize: 14, flexWrap: 'wrap', alignItems: 'center' },
+  simBadge: { background: '#ecfdf5', color: '#059669', padding: '3px 12px', borderRadius: 12, fontWeight: 600, fontSize: 13 },
+  sightTitle: { color: '#1e293b', marginBottom: 12, fontWeight: 600 },
+  sGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
+  sCard: { display: 'flex', background: '#fff', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  sImg: { width: 80, height: 80, objectFit: 'cover' },
+  sNoImg: { width: 80, height: 80, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#cbd5e1', fontSize: 11 },
+  sInfo: { padding: 10 },
 };

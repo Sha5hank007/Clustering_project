@@ -1,13 +1,13 @@
 """
-POST /api/ingest              — upload video (requires auth, scoped to user's shop)
-GET  /api/ingest/status/{id}  — check job progress (own shop or admin)
-GET  /api/ingest/jobs         — list jobs (own shop or all for admin)
+POST /api/ingest              — upload video (admin picks shop, guard/manager auto-scoped)
+GET  /api/ingest/status/{id}  — check job progress
+GET  /api/ingest/jobs         — list jobs
 """
 import os
 import uuid
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from api.deps import get_db, get_current_user, get_current_scope, CurrentUser, Scope
 from config import settings
 
@@ -15,16 +15,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _resolve_shop_id(user: CurrentUser, shop_id: int | None, db) -> int:
+    """Admin must provide shop_id. Guard/manager uses their own."""
+    if user.role == "admin":
+        if not shop_id:
+            raise HTTPException(400, "Admin must specify shop_id")
+        cur = db.cursor()
+        cur.execute("SELECT id FROM shops WHERE id = %s AND tenant_id = %s", (shop_id, user.tenant_id))
+        if not cur.fetchone():
+            raise HTTPException(404, "Shop not found in your organization")
+        return shop_id
+    else:
+        if not user.shop_id:
+            raise HTTPException(400, "User has no shop assigned")
+        return user.shop_id
+
+
 @router.post("/ingest")
 def upload_video(
     video: UploadFile = File(...),
     camera_id: str = Form(...),
     recorded_at: str = Form(...),
+    shop_id: int | None = Form(None),
     user: CurrentUser = Depends(get_current_user),
     db=Depends(get_db),
 ):
-    if not user.shop_id:
-        raise HTTPException(400, "Admin must specify a shop. Use /admin endpoints to manage shops.")
+    effective_shop_id = _resolve_shop_id(user, shop_id, db)
 
     try:
         rec_dt = datetime.fromisoformat(recorded_at)
@@ -55,18 +71,16 @@ def upload_video(
                                  camera_id, recorded_at, status)
         VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued')
         """,
-        (job_id, user.shop_id, user.user_id, video.filename, video_path, camera_id, rec_dt),
+        (job_id, effective_shop_id, user.user_id, video.filename, video_path, camera_id, rec_dt),
     )
     db.commit()
 
-    logger.info("Video uploaded: job=%s shop=%d user=%d" % (job_id, user.shop_id, user.user_id))
+    logger.info("Video uploaded: job=%s shop=%d user=%d" % (job_id, effective_shop_id, user.user_id))
 
     return {
-        "job_id": job_id,
-        "status": "queued",
-        "original_name": video.filename,
-        "camera_id": camera_id,
-        "file_size_mb": round(file_size_mb, 2),
+        "job_id": job_id, "status": "queued",
+        "original_name": video.filename, "camera_id": camera_id,
+        "shop_id": effective_shop_id, "file_size_mb": round(file_size_mb, 2),
     }
 
 
@@ -82,7 +96,7 @@ def get_job_status(
         """
         SELECT j.id, j.original_name, j.camera_id, j.recorded_at, j.fps,
                j.total_frames, j.processed_frame, j.status, j.error,
-               j.persons_found, j.sightings_added, j.created_at
+               j.persons_found, j.sightings_added, j.created_at, j.shop_id
         FROM ingest_jobs j
         WHERE j.id = %%s AND %s
         """ % clause,
@@ -103,26 +117,33 @@ def get_job_status(
         "progress_percent": progress, "status": row[7], "error": row[8],
         "persons_found": row[9], "sightings_added": row[10],
         "created_at": row[11].isoformat() if row[11] else None,
+        "shop_id": row[12],
     }
 
 
 @router.get("/ingest/jobs")
 def list_jobs(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
     scope: Scope = Depends(get_current_scope),
     db=Depends(get_db),
 ):
     clause, params = scope.sql_filter("j.shop_id")
     cur = db.cursor()
+    cur.execute("SELECT COUNT(*) FROM ingest_jobs j WHERE %s" % clause, params)
+    total = cur.fetchone()[0]
+    offset = (page - 1) * limit
     cur.execute(
         """
         SELECT j.id, j.original_name, j.camera_id, j.recorded_at,
                j.total_frames, j.processed_frame, j.status,
-               j.persons_found, j.sightings_added, j.created_at
+               j.persons_found, j.sightings_added, j.created_at, j.shop_id
         FROM ingest_jobs j
         WHERE %s
         ORDER BY j.created_at DESC
+        LIMIT %%s OFFSET %%s
         """ % clause,
-        params,
+        params + [limit, offset],
     )
 
     jobs = []
@@ -136,5 +157,10 @@ def list_jobs(
             "progress_percent": progress, "status": row[6],
             "persons_found": row[7], "sightings_added": row[8],
             "created_at": row[9].isoformat() if row[9] else None,
+            "shop_id": row[10],
         })
-    return {"jobs": jobs}
+    total_pages = (total + limit - 1) // limit if total > 0 else 0
+    return {
+        "jobs": jobs, "total": total, "page": page,
+        "limit": limit, "total_pages": total_pages,
+    }

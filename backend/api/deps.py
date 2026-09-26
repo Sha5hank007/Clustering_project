@@ -49,7 +49,7 @@ def get_embedder() -> Embedder:
 
 # ── Auth ──
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 @dataclass
@@ -90,17 +90,13 @@ class Scope:
             return "%s IN (SELECT id FROM shops WHERE tenant_id = %%s)" % shop_column, [self.tenant_id]
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> CurrentUser:
+def get_user_from_token(token: str) -> CurrentUser:
     """
     Extract and validate JWT token from Authorization header.
     Every protected endpoint depends on this.
 
     Header format: Authorization: Bearer <token>
     """
-    token = credentials.credentials
-
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -114,6 +110,15 @@ def get_current_user(
         shop_id=payload.get("shop_id"),
         role=payload["role"],
     )
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> CurrentUser:
+    """Extract and validate the JWT from the Authorization header."""
+    if credentials is None:
+        raise HTTPException(401, "Not authenticated")
+    return get_user_from_token(credentials.credentials)
 
 
 def get_current_scope(

@@ -1,5 +1,6 @@
 """
 Image retention policy + sighting insertion, scoped to a shop.
+Supports both file uploads (job_id) and live streams (stream_id).
 """
 import os
 import logging
@@ -22,10 +23,8 @@ def handle(
     conn,
     shop_id: int,
     job_id: str | None = None,
+    stream_id: str | None = None,
 ) -> None:
-    """
-    Insert a sighting row and optionally save a face crop to disk.
-    """
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     bucket = dt.toordinal() // settings.retention_window_days
 
@@ -69,40 +68,30 @@ def handle(
             """
             INSERT INTO sightings
                 (shop_id, person_id, camera_id, seen_at, quality_score,
-                 embedding, crop_path, bbox, job_id)
-            VALUES (%s, %s, %s, to_timestamp(%s), %s, %s::vector, %s, %s::jsonb, %s)
+                 embedding, crop_path, bbox, job_id, stream_id)
+            VALUES (%s, %s, %s, to_timestamp(%s), %s, %s::vector, %s, %s::jsonb, %s, %s)
             """,
             (
-                shop_id,
-                person_id,
-                camera_id,
-                timestamp,
-                crop_info.quality_score,
-                str(embedding_list),
-                crop_path,
-                str(bbox_list),
-                job_id,
+                shop_id, person_id, camera_id, timestamp,
+                crop_info.quality_score, str(embedding_list),
+                crop_path, str(bbox_list), job_id, stream_id,
             ),
         )
 
     conn.commit()
+    source = "job=%s" % job_id if job_id else "stream=%s" % stream_id if stream_id else "live"
     logger.info(
-        "Sighting inserted: person=%d camera=%s shop=%d crop=%s"
-        % (person_id, camera_id, shop_id, "saved" if crop_path else "skipped")
+        "Sighting inserted: person=%d camera=%s shop=%d %s crop=%s"
+        % (person_id, camera_id, shop_id, source, "saved" if crop_path else "skipped")
     )
 
 
 def _save_crop(person_id, crop, timestamp):
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     date_str = dt.strftime("%Y-%m-%d_%H%M%S")
-
     person_dir = os.path.join(settings.crop_storage_dir, "person_%d" % person_id)
     os.makedirs(person_dir, exist_ok=True)
-
-    filename = "%s.jpg" % date_str
-    filepath = os.path.join(person_dir, filename)
-
+    filepath = os.path.join(person_dir, "%s.jpg" % date_str)
     resized = cv2.resize(crop, (112, 112))
     cv2.imwrite(filepath, resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
-
     return filepath

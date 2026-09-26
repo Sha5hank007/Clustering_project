@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
 from api.deps import get_db, get_detector, get_embedder, get_current_scope, Scope
+from api.routers.crops import crop_path_to_url
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def identify(
     for s in cur.fetchall():
         crop_url = None
         if s[4]:
-            crop_url = "/api/crops/%s" % s[4].replace("\\", "/")
+            crop_url = crop_path_to_url(s[4])
         sightings.append({
             "id": s[0], "camera_id": s[1],
             "seen_at": s[2].isoformat() if s[2] else None,

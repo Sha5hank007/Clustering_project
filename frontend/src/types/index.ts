@@ -1,90 +1,96 @@
-export interface Sighting {
-  id: number;
-  seen_at: string;
-  camera_id: string;
-  quality_score?: number | null;
-  crop_url?: string | null;
-  bbox?: number[] | null;
+export interface LoginResponse {
+  token: string;
+  user_id: number;
+  email: string;
+  role: string;
+  tenant_id: number;
+  shop_id: number | null;
 }
 
 export interface Person {
   id: number;
-  label?: string | null;
+  label: string | null;
   sighting_count: number;
-  first_seen: string;
-  last_seen: string;
-  thumbnail_url?: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  latest_crop_url: string | null;
+  embedding_count?: number;
 }
 
-export interface PersonDetail {
+export interface Sighting {
   id: number;
-  label?: string | null;
-  embedding_count: number;
-  sighting_count: number;
-  first_seen: string;
-  last_seen: string;
-  model_version: string;
-  sightings: Sighting[];
-}
-
-export interface IdentificationResponse {
-  matched: boolean;
-  person_id: number;
-  label: string;
-  similarity: number;
-  first_seen: string;
-  last_seen: string;
-  total_sightings: number;
-  sightings: Sighting[];
-}
-
-export interface RecentSightingItem {
-  id: number;
-  person_id: number;
-  person_label?: string | null;
   camera_id: string;
-  seen_at: string;
-  crop_url?: string | null;
-}
-
-export interface SystemStats {
-  total_persons: number;
-  total_sightings: number;
-  labeled_persons: number;
-  sightings_last_24h: number;
-  cameras_count: number;
-  camera_breakdown: Record<string, number>;
-  recent_sightings: RecentSightingItem[];
-  model_detector: string;
-  model_recognizer: string;
-  match_threshold: number;
-  query_threshold: number;
+  seen_at: string | null;
+  quality_score: number | null;
+  crop_url: string | null;
 }
 
 export interface IngestJob {
   job_id: string;
-  filename: string;
+  original_name: string;
   camera_id: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed' | string;
-  progress: number;
-  created_at: string;
-  completed_at?: string | null;
-  frames_processed: number;
-  faces_detected: number;
+  recorded_at: string | null;
+  progress_percent: number;
+  status: string;
+  persons_found: number;
   sightings_added: number;
+  created_at: string | null;
+  fps?: number | null;
+  total_frames?: number | null;
+  processed_frame?: number | null;
   error?: string | null;
+  shop_id?: number | null;
 }
 
-export interface HealthStatus {
+export interface Stream {
+  stream_id: string;
+  camera_id: string;
+  name: string | null;
+  url: string;
   status: string;
-  service?: string;
-  version?: string;
-  models?: {
-    detector: string;
-    recognizer: string;
-  };
-  thresholds?: {
-    match: number;
-    query: number;
-  };
+  started_at: string | null;
+  stopped_at: string | null;
+  persons_found: number;
+  sightings_added: number;
+  shop_name: string;
+}
+
+export interface Stats {
+  total_persons: number;
+  total_sightings: number;
+  total_crops_on_disk: number;
+  storage_used_mb: number;
+  first_sighting: string | null;
+  last_sighting: string | null;
+  cameras: string[];
+  active_streams: number;
+  pending_jobs: number;
+}
+
+export interface Shop {
+  id: number;
+  name: string;
+  address: string | null;
+  user_count: number;
+  person_count: number;
+  job_count: number;
+  active_streams: number;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  role: string;
+  shop_id: number | null;
+  shop_name: string | null;
+}
+
+export interface IdentifyResult {
+  person_id: number;
+  label: string | null;
+  similarity: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  total_sightings: number;
+  sightings: Sighting[];
 }

@@ -10,6 +10,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from api.deps import get_db, get_current_scope, require_role, Scope, CurrentUser
+from api.routers.crops import crop_path_to_url
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def list_persons(
     for row in cur.fetchall():
         crop_url = None
         if row[5]:
-            crop_url = "/api/crops/%s" % row[5].replace("\\", "/")
+            crop_url = crop_path_to_url(row[5])
         persons.append({
             "id": row[0], "label": row[1], "sighting_count": row[2],
             "first_seen": row[3].isoformat() if row[3] else None,
@@ -150,7 +151,7 @@ def get_person(
     for s in cur.fetchall():
         crop_url = None
         if s[4]:
-            crop_url = "/api/crops/%s" % s[4].replace("\\", "/")
+            crop_url = crop_path_to_url(s[4])
         sightings.append({
             "id": s[0], "camera_id": s[1],
             "seen_at": s[2].isoformat() if s[2] else None,

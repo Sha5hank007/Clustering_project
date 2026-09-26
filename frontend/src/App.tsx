@@ -1,58 +1,48 @@
-import React, { useState, useEffect } from 'react';
-import { Navbar, NavTab } from './components/Navbar';
-import { IdentifyPage } from './pages/IdentifyPage';
-import { PersonsPage } from './pages/PersonsPage';
-import { IngestPage } from './pages/IngestPage';
-import { StatsPage } from './pages/StatsPage';
-import { checkHealth } from './api/client';
-import { HealthStatus } from './types';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import Navbar from './components/Navbar';
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import IngestPage from './pages/IngestPage';
+import PersonsPage from './pages/PersonsPage';
+import PersonDetailPage from './pages/PersonDetailPage';
+import IdentifyPage from './pages/IdentifyPage';
+import StreamsPage from './pages/StreamsPage';
+import AdminPage from './pages/AdminPage';
 
-export function App() {
-  const [currentTab, setCurrentTab] = useState<NavTab>('identify');
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [isOnline, setIsOnline] = useState(false);
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { token } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
 
-  const fetchHealthStatus = async () => {
-    try {
-      const status = await checkHealth();
-      setHealth(status);
-      setIsOnline(true);
-    } catch {
-      setIsOnline(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchHealthStatus();
-    const interval = setInterval(fetchHealthStatus, 15000);
-    return () => clearInterval(interval);
-  }, []);
+function AppRoutes() {
+  const { token } = useAuth();
 
   return (
-    <div className="app-root">
-      <Navbar
-        currentTab={currentTab}
-        onSelectTab={setCurrentTab}
-        health={health}
-        isOnline={isOnline}
-      />
-
-      <main className="app-main-content">
-        {currentTab === 'identify' && <IdentifyPage />}
-        {currentTab === 'persons' && <PersonsPage />}
-        {currentTab === 'ingest' && <IngestPage />}
-        {currentTab === 'stats' && <StatsPage />}
-      </main>
-
-      <footer className="app-footer">
-        <div className="footer-content">
-          <span>Face Track • SCRFD Face Detection & ArcFace Embedding Pipeline</span>
-          <span className="footer-dot">•</span>
-          <span>PostgreSQL + pgvector</span>
-        </div>
-      </footer>
+    <div style={{ minHeight: '100vh', background: '#f1f5f9' }}>
+      {token && <Navbar />}
+      <Routes>
+        <Route path="/login" element={token ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+        <Route path="/ingest" element={<ProtectedRoute><IngestPage /></ProtectedRoute>} />
+        <Route path="/persons" element={<ProtectedRoute><PersonsPage /></ProtectedRoute>} />
+        <Route path="/persons/:id" element={<ProtectedRoute><PersonDetailPage /></ProtectedRoute>} />
+        <Route path="/identify" element={<ProtectedRoute><IdentifyPage /></ProtectedRoute>} />
+        <Route path="/streams" element={<ProtectedRoute><StreamsPage /></ProtectedRoute>} />
+        <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

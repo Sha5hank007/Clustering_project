@@ -1,298 +1,171 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Video,
-  UploadCloud,
-  FileVideo,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
-  Camera,
-  RefreshCw,
-  Play,
-  Check,
-  X,
-} from 'lucide-react';
-import { uploadVideoForIngest, getIngestJobs } from '../api/client';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import api from '../api/client';
 import { IngestJob } from '../types';
 
-const getDefaultRecordingDateTime = () => {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-};
+interface Shop {
+  id: number;
+  name: string;
+}
 
-export const IngestPage: React.FC = () => {
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [cameraId, setCameraId] = useState('entrance_cam');
-  const [recordedAt, setRecordedAt] = useState<string>(getDefaultRecordingDateTime());
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+function localDateTime() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
 
+export default function IngestPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [file, setFile] = useState<File | null>(null);
+  const [cameraId, setCameraId] = useState('');
+  const [recordedAt, setRecordedAt] = useState(localDateTime);
+  const [shopId, setShopId] = useState<number | ''>('');
+  const [shops, setShops] = useState<Shop[]>([]);
   const [jobs, setJobs] = useState<IngestJob[]>([]);
-  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedJob, setSelectedJob] = useState<IngestJob | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [shopError, setShopError] = useState('');
 
-  const fetchJobs = async () => {
-    setIsLoadingJobs(true);
+  const fetchJobs = async (requestedPage = page) => {
     try {
-      const data = await getIngestJobs();
-      setJobs(data);
-    } catch (err) {
-      console.error('Failed to fetch ingest jobs:', err);
-    } finally {
-      setIsLoadingJobs(false);
+      const response = await api.get('/ingest/jobs', { params: { page: requestedPage, limit: 10 } });
+      setJobs(response.data.jobs || []);
+      setTotalPages(response.data.total_pages || 0);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Unable to load upload jobs');
+    }
+  };
+
+  const selectJob = async (jobId: string) => {
+    try {
+      const response = await api.get(`/ingest/status/${jobId}`);
+      setSelectedJob(response.data);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Unable to load video details');
     }
   };
 
   useEffect(() => {
-    fetchJobs();
-    const timer = setInterval(fetchJobs, 10000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setVideoFile(e.target.files[0]);
-      setUploadSuccess(null);
-      setUploadError(null);
+    fetchJobs(page);
+    if (isAdmin) {
+      api.get('/admin/shops')
+        .then(response => setShops(response.data.shops || []))
+        .catch((err: any) => setShopError(err.response?.data?.detail || 'Unable to load shops'));
     }
-  };
+    const interval = setInterval(fetchJobs, 5000);
+    return () => clearInterval(interval);
+  }, [isAdmin, page]);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setVideoFile(e.dataTransfer.files[0]);
-      setUploadSuccess(null);
-      setUploadError(null);
+  const handleUpload = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file) {
+      setError('Please choose a video file');
+      return;
     }
-  };
+    if (isAdmin && !shopId) {
+      setError('Please select a shop');
+      return;
+    }
 
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!videoFile) return;
-
-    setIsUploading(true);
-    setUploadError(null);
-    setUploadSuccess(null);
+    setUploading(true);
+    setError('');
+    const form = new FormData();
+    form.append('video', file);
+    form.append('camera_id', cameraId);
+    form.append('recorded_at', new Date(recordedAt).toISOString());
+    if (isAdmin) form.append('shop_id', String(shopId));
 
     try {
-      const selectedRecordedAt = recordedAt || getDefaultRecordingDateTime();
-      const job = await uploadVideoForIngest(
-        videoFile,
-        cameraId.trim() || 'default_cam',
-        selectedRecordedAt
-      );
-      setUploadSuccess(`Video queued successfully! Job ID: #${job.job_id}`);
-      setVideoFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      fetchJobs();
+      await api.post('/ingest', form);
+      setFile(null);
+      setCameraId('');
+      setRecordedAt(localDateTime());
+      setShopId('');
+      const input = document.getElementById('video-file') as HTMLInputElement | null;
+      if (input) input.value = '';
+      setPage(1);
+      await fetchJobs(1);
     } catch (err: any) {
-      setUploadError(err.message || 'Failed to upload video for ingestion.');
+      setError(err.response?.data?.detail || 'Upload failed');
     } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'completed':
-        return <span className="status-badge badge-completed"><Check size={12} /> Completed</span>;
-      case 'processing':
-        return <span className="status-badge badge-processing"><RefreshCw size={12} className="spinning" /> In Progress</span>;
-      case 'failed':
-        return <span className="status-badge badge-failed"><X size={12} /> Failed</span>;
-      default:
-        return <span className="status-badge badge-queued"><Clock size={12} /> Queued</span>;
+      setUploading(false);
     }
   };
 
   return (
-    <div className="page-container ingest-page animate-fade-in">
-      <div className="page-header">
-        <div className="page-title-group">
-          <h2 className="page-title">Video Ingestion & Processing</h2>
-          <p className="page-subtitle">
-            Upload surveillance video footage for frame sampling (5fps), SCRFD tracking, and ArcFace centroid matching
-          </p>
+    <div style={styles.container}>
+      <h1 style={styles.title}>Upload Video</h1>
+      <form onSubmit={handleUpload} style={styles.form}>
+        <label style={styles.label}>Video file
+          <input id="video-file" type="file" accept="video/*" required onChange={e => setFile(e.target.files?.[0] || null)} />
+        </label>
+        <div style={styles.grid}>
+          <label style={styles.label}>Camera ID
+            <input value={cameraId} onChange={e => setCameraId(e.target.value)} placeholder="cam-01" required style={styles.input} />
+          </label>
+          <label style={styles.label}>Recorded at
+            <input type="datetime-local" value={recordedAt} onChange={e => setRecordedAt(e.target.value)} required style={styles.input} />
+          </label>
         </div>
+        {isAdmin && <label style={styles.label}>Shop
+          <select value={shopId} onChange={e => setShopId(e.target.value ? Number(e.target.value) : '')} required style={styles.input}>
+            <option value="">Select a shop...</option>
+            {shops.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+          </select>
+          {shopError && <span style={styles.shopError}>{shopError}</span>}
+        </label>}
+        {error && <div style={styles.error}>{error}</div>}
+        <button type="submit" disabled={uploading} style={styles.button}>{uploading ? 'Uploading...' : 'Upload video'}</button>
+      </form>
 
-        <button className="btn-secondary" onClick={fetchJobs} disabled={isLoadingJobs}>
-          <RefreshCw size={14} className={isLoadingJobs ? 'spinning' : ''} />
-          <span>Refresh Queue</span>
+      <h2 style={styles.heading}>Upload jobs</h2>
+      {selectedJob && <div style={styles.details}>
+        <strong>{selectedJob.original_name}</strong>
+        <div style={styles.detailGrid}>
+          <span>Status: {selectedJob.status}</span>
+          <span>Camera: {selectedJob.camera_id}</span>
+          <span>Recorded: {selectedJob.recorded_at ? new Date(selectedJob.recorded_at).toLocaleString() : 'N/A'}</span>
+          <span>Frames: {selectedJob.processed_frame ?? 0} / {selectedJob.total_frames ?? 'N/A'}</span>
+          <span>Persons: {selectedJob.persons_found}</span>
+          <span>Sightings: {selectedJob.sightings_added}</span>
+        </div>
+        {selectedJob.error && <div style={styles.error}>{selectedJob.error}</div>}
+      </div>}
+      {jobs.length === 0 ? <p style={styles.muted}>No upload jobs yet.</p> : jobs.map(job => (
+        <button key={job.job_id} type="button" onClick={() => selectJob(job.job_id)} style={styles.jobButton}>
+          <div style={styles.job}><div><strong>{job.original_name}</strong><div style={styles.muted}>{job.camera_id} · {job.status}</div></div><div style={styles.progress}>{job.progress_percent.toFixed(1)}%</div></div>
         </button>
-      </div>
-
-      <div className="ingest-grid">
-        {/* Video Upload Form */}
-        <section className="upload-section glass-panel">
-          <div className="section-header">
-            <Video size={18} />
-            <h3>Upload Surveillance Video</h3>
-          </div>
-
-          <form onSubmit={handleUpload} className="ingest-form">
-            <div
-              className={`video-dropzone ${videoFile ? 'has-file' : ''}`}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="video/*,.mp4,.avi,.mov,.mkv,.webm"
-                onChange={handleFileChange}
-                style={{ display: 'none' }}
-              />
-
-              {videoFile ? (
-                <div className="video-file-info">
-                  <FileVideo size={40} className="video-icon" />
-                  <span className="video-filename">{videoFile.name}</span>
-                  <span className="video-filesize">
-                    {(videoFile.size / (1024 * 1024)).toFixed(2)} MB
-                  </span>
-                  <span className="replace-hint">Click to replace file</span>
-                </div>
-              ) : (
-                <div className="dropzone-prompt">
-                  <UploadCloud size={40} className="upload-icon" />
-                  <h4>Select Video File</h4>
-                  <p>Drag and drop MP4, AVI, MKV, MOV, or WEBM footage</p>
-                </div>
-              )}
-            </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">
-                  <Camera size={14} />
-                  <span>Camera ID / Location</span>
-                </label>
-                <input
-                  type="text"
-                  value={cameraId}
-                  onChange={(e) => setCameraId(e.target.value)}
-                  placeholder="e.g. entrance_cam, lobby_01"
-                  className="form-input"
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">
-                  <Clock size={14} />
-                  <span>Recording Date & Time</span>
-                </label>
-                <input
-                  type="datetime-local"
-                  value={recordedAt}
-                  onChange={(e) => setRecordedAt(e.target.value)}
-                  className="form-input"
-                  required
-                  title="Select the date and time the footage was recorded"
-                />
-              </div>
-            </div>
-
-            {uploadError && (
-              <div className="error-card glass-panel animate-fade-in">
-                <AlertCircle size={18} className="error-icon" />
-                <span>{uploadError}</span>
-              </div>
-            )}
-
-            {uploadSuccess && (
-              <div className="success-card glass-panel animate-fade-in">
-                <CheckCircle2 size={18} className="success-icon" />
-                <span>{uploadSuccess}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="btn-primary glow-btn full-width"
-              disabled={!videoFile || isUploading}
-            >
-              {isUploading ? (
-                <>
-                  <RefreshCw size={16} className="spinning" />
-                  <span>Uploading & Queuing Video...</span>
-                </>
-              ) : (
-                <>
-                  <Play size={16} />
-                  <span>Queue Video for Processing</span>
-                </>
-              )}
-            </button>
-          </form>
-        </section>
-
-        {/* Jobs Queue Section */}
-        <section className="jobs-section glass-panel">
-          <div className="section-header">
-            <Clock size={18} />
-            <h3>Processing Queue</h3>
-            <span className="count-pill">{jobs.length} Jobs</span>
-          </div>
-
-          {jobs.length === 0 ? (
-            <div className="empty-jobs">
-              <FileVideo size={36} className="empty-icon" />
-              <p>No video jobs in queue. Upload footage on the left to start processing.</p>
-            </div>
-          ) : (
-            <div className="jobs-list">
-              {jobs.map((job) => (
-                <div key={job.job_id} className="job-card glass-panel animate-fade-in">
-                  <div className="job-card-header">
-                    <div className="job-title-group">
-                      <span className="job-filename">{job.filename}</span>
-                      <span className="job-camera">
-                        <Camera size={12} /> {job.camera_id}
-                      </span>
-                    </div>
-                    {getStatusBadge(job.status)}
-                  </div>
-
-                  <div className="job-card-metrics">
-                    <div className="job-metric">
-                      <span className="metric-name">Job ID</span>
-                      <span className="metric-val">#{job.job_id}</span>
-                    </div>
-                    <div className="job-metric">
-                      <span className="metric-name">Queued At</span>
-                      <span className="metric-val">
-                        {new Date(job.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  </div>
-
-                  {job.status === 'processing' && (
-                    <div className="job-progress-bar-wrapper">
-                      <div
-                        className="job-progress-fill"
-                        style={{ width: `${Math.round(job.progress * 100)}%` }}
-                      ></div>
-                    </div>
-                  )}
-
-                  {job.error && (
-                    <div className="job-error-msg">
-                      <AlertCircle size={13} />
-                      <span>{job.error}</span>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
+      ))}
+      {totalPages > 1 && <div style={styles.pagination}>
+        <button type="button" onClick={() => setPage(current => Math.max(1, current - 1))} disabled={page === 1} style={styles.pageButton}>Previous</button>
+        <span style={styles.muted}>Page {page} of {totalPages}</span>
+        <button type="button" onClick={() => setPage(current => Math.min(totalPages, current + 1))} disabled={page === totalPages} style={styles.pageButton}>Next</button>
+      </div>}
     </div>
   );
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  container: { maxWidth: 900, margin: '0 auto', padding: 28 },
+  title: { color: '#0f172a', marginBottom: 20 },
+  heading: { color: '#0f172a', marginTop: 32, fontSize: 20 },
+  form: { background: '#fff', padding: 24, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+  grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 },
+  label: { display: 'flex', flexDirection: 'column', gap: 6, color: '#475569', fontSize: 14, fontWeight: 600 },
+  input: { width: '100%', boxSizing: 'border-box', padding: 10, border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 14, fontWeight: 400 },
+  button: { alignSelf: 'flex-start', padding: '10px 22px', border: 'none', borderRadius: 8, background: '#2563eb', color: '#fff', fontWeight: 600, cursor: 'pointer' },
+  error: { color: '#b91c1c', background: '#fef2f2', padding: 10, borderRadius: 8, fontSize: 14 },
+  shopError: { color: '#b91c1c', fontSize: 13, fontWeight: 400 },
+  job: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: 16, marginBottom: 10, borderRadius: 10, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' },
+  jobButton: { display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer' },
+  details: { background: '#eff6ff', border: '1px solid #bfdbfe', padding: 16, margin: '16px 0', borderRadius: 10, color: '#1e3a8a' },
+  detailGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 10, fontSize: 13 },
+  pagination: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 18 },
+  pageButton: { padding: '8px 14px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff', color: '#475569', cursor: 'pointer' },
+  progress: { color: '#2563eb', fontWeight: 700 },
+  muted: { color: '#64748b', fontSize: 13, marginTop: 4 },
 };

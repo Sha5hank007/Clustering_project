@@ -187,6 +187,16 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
             # Log every 10 seconds
             now = time.time()
             if now - last_log_time >= 10:
+                # Log and update progress every 10 seconds
+                total = job["total_frames"] or 1
+                logger.info(
+                    "Progress: %d/%d frames (%.1f%%) | processed %d | %d persons | %d sightings"
+                    % (frames_read, total, frames_read / total * 100,
+                       frames_processed, len(persons_found), sightings_added)
+                )
+                # Update DB so the UI sees progress every 10 seconds, not every 5 minutes
+                _update_progress(conn, job_id, frames_read, len(persons_found), sightings_added)
+                last_log_time = now
                 total = job["total_frames"] or 1
                 logger.info(
                     "Progress: %d/%d frames (%.1f%%) | processed %d | %d persons | %d sightings"
