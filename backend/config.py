@@ -3,8 +3,14 @@ Central configuration. Reads all values from .env via pydantic-settings.
 Every tunable threshold, path, and camera setting lives here.
 No other file reads environment variables directly.
 """
+from pathlib import Path
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_ENV = Path(__file__).resolve().parent / ".env"
+_ROOT_ENV = Path(__file__).resolve().parent.parent / ".env"
+_ENV_FILES = (str(_BACKEND_ENV), str(_ROOT_ENV))
 
 
 class Settings(BaseSettings):
@@ -43,11 +49,16 @@ class Settings(BaseSettings):
     retention_window_days: int = 2
     crop_storage_dir: str = "./data/crops"
 
+    # Ingestion worker
+    chunk_duration_minutes: int = 5      # checkpoint / flush interval
+    ingest_workers: int = 1              # parallel worker processes (future)
+    ingest_dir: str = "./data/ingest"    # where uploaded videos are saved
+
     # Database
-    postgres_user: str = "facetrack"
-    postgres_password: str = "changeme"
+    postgres_user: str = "postgres"
+    postgres_password: str = "qwertyuiop"
     postgres_db: str = "facetrack"
-    database_url: str = "postgresql+asyncpg://facetrack:changeme@localhost:5432/facetrack"
+    database_url: str = "postgresql+asyncpg://postgres:qwertyuiop@127.0.0.1:5432/facetrack"
 
     # RTSP
     rtsp_buffer_size: int = 1
@@ -56,6 +67,20 @@ class Settings(BaseSettings):
 
     # Debug
     debug_display: bool = True
+
+    @field_validator("camera_roi", mode="before")
+    @classmethod
+    def normalize_camera_roi(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        if not cleaned or cleaned.startswith("#"):
+            return None
+        if "#" in cleaned:
+            cleaned = cleaned.split("#", 1)[0].strip()
+        return cleaned or None
 
     @property
     def det_size_tuple(self) -> tuple[int, int]:
@@ -87,7 +112,12 @@ class Settings(BaseSettings):
             return int(self.camera_source)
         return self.camera_source
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILES,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        protected_namespaces=(),
+    )
 
 
 settings = Settings()
