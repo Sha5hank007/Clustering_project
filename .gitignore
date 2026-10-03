@@ -33,6 +33,7 @@ Thumbs.db
 
 # ── Docker ──
 docker-compose.override.yml
+pgadmin/pgpass
 
 # ── Alembic ──
 *.pyc
