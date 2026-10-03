@@ -8,6 +8,26 @@ class Base(DeclarativeBase):
     pass
 
 
+class IngestJob(Base):
+    __tablename__ = "ingest_jobs"
+
+    id = Column(Text, primary_key=True)
+    original_name = Column(Text, nullable=True)
+    video_path = Column(Text, nullable=False)
+    camera_id = Column(String(100), nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=True)
+    fps = Column(Float, nullable=True)
+    total_frames = Column(Integer, nullable=True)
+    processed_frame = Column(Integer, default=0)
+    status = Column(Text, nullable=False, default="queued")
+    error = Column(Text, nullable=True)
+    persons_found = Column(Integer, default=0)
+    sightings_added = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    sightings = relationship("Sighting", back_populates="job")
+
+
 class Person(Base):
     __tablename__ = "persons"
 
@@ -34,6 +54,7 @@ class Sighting(Base):
     embedding = Column(Vector(512), nullable=True)
     crop_path = Column(Text, nullable=True)
     bbox = Column(JSONB, nullable=True)
+    job_id = Column(Text, ForeignKey("ingest_jobs.id", ondelete="SET NULL"), nullable=True)
 
     person = relationship("Person", back_populates="sightings")
-
+    job = relationship("IngestJob", back_populates="sightings")
