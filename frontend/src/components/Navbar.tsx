@@ -26,7 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
         <div className="brand-text">
           <span className="brand-title">FACE TRACK</span>
-          <span className="brand-tag">FORENSIC INTELLIGENCE</span>
+          <span className="brand-tag">SMART RECOGNITION</span>
         </div>
       </div>
 
@@ -44,7 +44,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => onSelectTab('persons')}
         >
           <Users size={18} />
-          <span>Persons</span>
+          <span>People Directory</span>
         </button>
 
         <button
@@ -52,7 +52,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => onSelectTab('ingest')}
         >
           <Video size={18} />
-          <span>Ingestion</span>
+          <span>Video Upload</span>
         </button>
 
         <button
@@ -72,9 +72,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </div>
         {health && (
-          <div className="model-badge" title={`Detector: ${health.models.detector} | Recognizer: ${health.models.recognizer}`}>
+          <div className="model-badge" title="AI Face Detection & Recognition Engines Active">
             <Activity size={12} />
-            <span>SCRFD + ArcFace</span>
+            <span>AI Engine Ready</span>
           </div>
         )}
       </div>

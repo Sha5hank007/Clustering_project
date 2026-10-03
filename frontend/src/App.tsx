@@ -46,9 +46,9 @@ export function App() {
 
       <footer className="app-footer">
         <div className="footer-content">
-          <span>Face Track • SCRFD Face Detection & ArcFace Embedding Pipeline</span>
+          <span>Face Track • Intelligent Facial Recognition & Activity Platform</span>
           <span className="footer-dot">•</span>
-          <span>PostgreSQL + pgvector</span>
+          <span>Enterprise Edition</span>
         </div>
       </footer>
     </div>

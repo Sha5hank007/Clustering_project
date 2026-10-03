@@ -106,9 +106,9 @@ export const IngestPage: React.FC = () => {
     <div className="page-container ingest-page animate-fade-in">
       <div className="page-header">
         <div className="page-title-group">
-          <h2 className="page-title">Video Ingestion & Processing</h2>
+          <h2 className="page-title">Video Upload & Processing</h2>
           <p className="page-subtitle">
-            Upload surveillance video footage for frame sampling (5fps), SCRFD tracking, and ArcFace centroid matching
+            Upload surveillance video footage to automatically detect, recognize, and index people across cameras
           </p>
         </div>
 
@@ -123,7 +123,7 @@ export const IngestPage: React.FC = () => {
         <section className="upload-section glass-panel">
           <div className="section-header">
             <Video size={18} />
-            <h3>Upload Surveillance Video</h3>
+            <h3>Upload Video Footage</h3>
           </div>
 
           <form onSubmit={handleUpload} className="ingest-form">
@@ -153,8 +153,8 @@ export const IngestPage: React.FC = () => {
               ) : (
                 <div className="dropzone-prompt">
                   <UploadCloud size={40} className="upload-icon" />
-                  <h4>Select Video File</h4>
-                  <p>Drag and drop MP4, AVI, MKV, MOV, or WEBM footage</p>
+                  <h4>Select or Drop Video File</h4>
+                  <p>Supports MP4, AVI, MKV, MOV, or WEBM video files</p>
                 </div>
               )}
             </div>
@@ -211,12 +211,12 @@ export const IngestPage: React.FC = () => {
               {isUploading ? (
                 <>
                   <RefreshCw size={16} className="spinning" />
-                  <span>Uploading & Queuing Video...</span>
+                  <span>Uploading & Scheduling Video...</span>
                 </>
               ) : (
                 <>
                   <Play size={16} />
-                  <span>Queue Video for Processing</span>
+                  <span>Process Video Footage</span>
                 </>
               )}
             </button>

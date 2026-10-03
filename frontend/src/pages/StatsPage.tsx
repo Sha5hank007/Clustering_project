@@ -40,9 +40,9 @@ export const StatsPage: React.FC = () => {
     <div className="page-container stats-page animate-fade-in">
       <div className="page-header">
         <div className="page-title-group">
-          <h2 className="page-title">Intelligence & System Analytics</h2>
+          <h2 className="page-title">System Overview & Analytics</h2>
           <p className="page-subtitle">
-            Real-time biometric database counts, camera distribution, and AI detection pipeline metrics
+            Real-time overview of recognized people, camera coverage, and system activity
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export const StatsPage: React.FC = () => {
       {isLoading && (
         <div className="loading-grid glass-panel">
           <div className="spinner"></div>
-          <p>Calculating database metrics and camera aggregates...</p>
+          <p>Calculating system analytics...</p>
         </div>
       )}
 
@@ -81,9 +81,9 @@ export const StatsPage: React.FC = () => {
                 <Users size={24} />
               </div>
               <div className="metric-info">
-                <span className="metric-label">Total Known Persons</span>
+                <span className="metric-label">Total Individuals</span>
                 <span className="metric-number">{stats.total_persons}</span>
-                <span className="metric-sub">{stats.labeled_persons} labeled with names</span>
+                <span className="metric-sub">{stats.labeled_persons} named profiles</span>
               </div>
             </div>
 
@@ -114,9 +114,9 @@ export const StatsPage: React.FC = () => {
                 <Camera size={24} />
               </div>
               <div className="metric-info">
-                <span className="metric-label">Monitored Cameras</span>
+                <span className="metric-label">Active Cameras</span>
                 <span className="metric-number">{stats.cameras_count}</span>
-                <span className="metric-sub">Active surveillance points</span>
+                <span className="metric-sub">Connected video channels</span>
               </div>
             </div>
           </div>
@@ -162,35 +162,35 @@ export const StatsPage: React.FC = () => {
             <div className="models-info-card glass-panel">
               <div className="card-section-header">
                 <Cpu size={18} />
-                <h3>Deep Learning Models & Tuning</h3>
+                <h3>System & Engine Configuration</h3>
               </div>
 
               <div className="pipeline-specs-list">
                 <div className="spec-row">
-                  <span className="spec-title">Face Detector</span>
-                  <span className="spec-val">SCRFD ({stats.model_detector})</span>
+                  <span className="spec-title">Face Detection Engine</span>
+                  <span className="spec-val">High-Precision Detector</span>
                 </div>
                 <div className="spec-row">
-                  <span className="spec-title">Face Embedder</span>
-                  <span className="spec-val">ArcFace ({stats.model_recognizer})</span>
+                  <span className="spec-title">Recognition Engine</span>
+                  <span className="spec-val">High-Accuracy Recognition</span>
                 </div>
                 <div className="spec-row">
-                  <span className="spec-title">Vector Dimensionality</span>
-                  <span className="spec-val">512-d L2 Normalized</span>
+                  <span className="spec-title">Profile Precision</span>
+                  <span className="spec-val">High Resolution (512-dim)</span>
                 </div>
                 <div className="spec-row">
-                  <span className="spec-title">Ingest Match Threshold</span>
-                  <span className="spec-val">{(stats.match_threshold * 100).toFixed(0)}% Cosine Similarity</span>
+                  <span className="spec-title">Auto-Group Threshold</span>
+                  <span className="spec-val">{(stats.match_threshold * 100).toFixed(0)}% Match Confidence</span>
                 </div>
                 <div className="spec-row">
-                  <span className="spec-title">Query Match Threshold</span>
-                  <span className="spec-val">{(stats.query_threshold * 100).toFixed(0)}% Cosine Similarity</span>
+                  <span className="spec-title">Search Threshold</span>
+                  <span className="spec-val">{(stats.query_threshold * 100).toFixed(0)}% Match Confidence</span>
                 </div>
               </div>
 
               <div className="database-engine-badge">
                 <ShieldCheck size={16} />
-                <span>PostgreSQL 16 + pgvector HNSW Indexing</span>
+                <span>Enterprise Vector Database Active</span>
               </div>
             </div>
           </div>
@@ -200,7 +200,7 @@ export const StatsPage: React.FC = () => {
             <div className="recent-activity-card glass-panel">
               <div className="card-section-header">
                 <Clock size={18} />
-                <h3>Recent Sighting Detections</h3>
+                <h3>Recent Sightings</h3>
               </div>
 
               <div className="recent-feed-grid">

@@ -87,7 +87,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
 
         {preview ? (
           <div className="preview-container">
-            <img src={preview} alt="Suspect Query Preview" className="preview-image" />
+            <img src={preview} alt="Query Photo Preview" className="preview-image" />
             <button
               type="button"
               className="clear-preview-btn"
@@ -106,13 +106,13 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
             <div className="upload-icon-circle">
               <UploadCloud size={36} className="upload-icon" />
             </div>
-            <h3 className="upload-headline">Drag & Drop Suspect Photo</h3>
+            <h3 className="upload-headline">Drag & Drop Reference Photo</h3>
             <p className="upload-subtext">
-              Supports JPG, PNG, WEBP — SCRFD detects face & ArcFace matches known centroids
+              Supports JPG, PNG, and WEBP images to identify and search matching individuals
             </p>
             <div className="upload-action-pill">
               <ImageIcon size={14} />
-              <span>Browse File System</span>
+              <span>Browse Files</span>
             </div>
           </div>
         )}

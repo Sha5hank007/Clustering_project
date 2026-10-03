@@ -66,9 +66,9 @@ export const IdentifyPage: React.FC = () => {
     <div className="page-container identify-page animate-fade-in">
       <div className="page-header">
         <div className="page-title-group">
-          <h2 className="page-title">Forensic Face Identification</h2>
+          <h2 className="page-title">Person Search & Identification</h2>
           <p className="page-subtitle">
-            Upload a suspect photo to extract 512-d ArcFace embeddings and query sighting history
+            Upload a reference photo to locate matching individuals and view their activity history across cameras
           </p>
         </div>
       </div>
@@ -78,7 +78,7 @@ export const IdentifyPage: React.FC = () => {
         <section className="query-panel glass-panel">
           <div className="section-header-compact">
             <Search size={16} />
-            <span>Target Image</span>
+            <span>Reference Photo</span>
           </div>
 
           <ImageUpload onImageSelected={handleImageSelected} isLoading={isLoading} />
@@ -93,12 +93,12 @@ export const IdentifyPage: React.FC = () => {
                 {isLoading ? (
                   <>
                     <RefreshCw size={16} className="spinning" />
-                    <span>Analyzing Embeddings...</span>
+                    <span>Searching Records...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles size={16} />
-                    <span>Run Forensic Search</span>
+                    <span>Search Person</span>
                   </>
                 )}
               </button>
@@ -109,8 +109,8 @@ export const IdentifyPage: React.FC = () => {
             <div className="identifying-indicator glass-panel animate-fade-in">
               <div className="radar-spinner"></div>
               <div className="identifying-text">
-                <strong>Detecting facial keypoints (SCRFD)...</strong>
-                <span>Matching against database person centroids</span>
+                <strong>Detecting face in photo...</strong>
+                <span>Matching with indexed profiles</span>
               </div>
             </div>
           )}
@@ -119,7 +119,7 @@ export const IdentifyPage: React.FC = () => {
             <div className="error-card glass-panel animate-fade-in">
               <AlertCircle size={24} className="error-icon" />
               <div className="error-details">
-                <h4>Match Query Failed</h4>
+                <h4>Search Unsuccessful</h4>
                 <p>{error}</p>
               </div>
               <button className="btn-secondary-sm" onClick={handleReset}>
@@ -136,9 +136,9 @@ export const IdentifyPage: React.FC = () => {
               <div className="match-banner">
                 <ShieldAlert size={24} className="match-shield-icon" />
                 <div className="match-banner-text">
-                  <h3>Identity Match Confirmed</h3>
+                  <h3>Individual Identified</h3>
                   <p>
-                    Cosine similarity score is{' '}
+                    Match confidence is{' '}
                     <strong>{(result.similarity * 100).toFixed(1)}%</strong>
                   </p>
                 </div>
@@ -157,10 +157,10 @@ export const IdentifyPage: React.FC = () => {
                   <button
                     className={`toggle-btn ${viewMode === 'grid' ? 'active' : ''}`}
                     onClick={() => setViewMode('grid')}
-                    title="Crops Gallery"
+                    title="Photos Gallery"
                   >
                     <Grid size={16} />
-                    <span>Crops</span>
+                    <span>Photos</span>
                   </button>
                 </div>
 
@@ -192,7 +192,7 @@ export const IdentifyPage: React.FC = () => {
               <div className="history-header">
                 <div className="history-title">
                   <Clock size={18} />
-                  <h3>Recorded Sighting History</h3>
+                  <h3>Activity & Sighting History</h3>
                   <span className="count-pill">{result.sightings.length} events</span>
                 </div>
               </div>

@@ -34,7 +34,7 @@ export const SightingTimeline: React.FC<SightingTimelineProps> = ({ sightings })
     return (
       <div className="empty-timeline glass-panel">
         <Clock size={32} className="empty-icon" />
-        <p>No sighting history recorded yet.</p>
+        <p>No activity history recorded yet.</p>
       </div>
     );
   }
@@ -69,7 +69,7 @@ export const SightingTimeline: React.FC<SightingTimelineProps> = ({ sightings })
                     <div
                       className="crop-preview-wrapper"
                       onClick={() => setSelectedCrop(sighting.crop_url!)}
-                      title="Click to zoom face crop"
+                      title="Click to enlarge photo"
                     >
                       <img
                         src={sighting.crop_url}
@@ -86,20 +86,15 @@ export const SightingTimeline: React.FC<SightingTimelineProps> = ({ sightings })
                   ) : (
                     <div className="crop-placeholder-box">
                       <ImageIcon size={20} />
-                      <span>No crop saved</span>
+                      <span>No image available</span>
                     </div>
                   )}
 
                   <div className="sighting-metadata">
                     {sighting.quality_score !== undefined && sighting.quality_score !== null && (
-                      <div className="quality-pill" title="Detection Sharpness & Pose Quality Score">
+                      <div className="quality-pill" title="Image Clarity Score">
                         <Award size={13} />
-                        <span>Quality: {(sighting.quality_score).toFixed(2)}</span>
-                      </div>
-                    )}
-                    {sighting.bbox && sighting.bbox.length === 4 && (
-                      <div className="bbox-pill">
-                        <span>Box: [{sighting.bbox.map(v => Math.round(v)).join(', ')}]</span>
+                        <span>Clarity: {Math.round(sighting.quality_score * 100)}%</span>
                       </div>
                     )}
                     <div className="sighting-id-sub">
@@ -123,8 +118,8 @@ export const SightingTimeline: React.FC<SightingTimelineProps> = ({ sightings })
             >
               <X size={20} />
             </button>
-            <img src={selectedCrop} alt="Enlarged Face Crop" className="lightbox-img" />
-            <span className="lightbox-caption">High-Resolution Face Crop</span>
+            <img src={selectedCrop} alt="Enlarged Photo" className="lightbox-img" />
+            <span className="lightbox-caption">Captured Sighting Photo</span>
           </div>
         </div>
       )}

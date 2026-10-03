@@ -15,7 +15,7 @@ export const CropGrid: React.FC<CropGridProps> = ({ sightings }) => {
     return (
       <div className="empty-crop-grid glass-panel">
         <ImageIcon size={32} className="empty-icon" />
-        <p>No face crop images archived for this person.</p>
+        <p>No captured photos recorded for this person.</p>
       </div>
     );
   }

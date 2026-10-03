@@ -47,7 +47,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!onDelete) return;
-    if (window.confirm(`Are you sure you want to delete Person #${person.id}? All associated sighting records will be deleted.`)) {
+    if (window.confirm(`Are you sure you want to remove Person #${person.id}? All associated sighting records will be deleted.`)) {
       setIsDeleting(true);
       try {
         await onDelete(person.id);
@@ -112,7 +112,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
                 type="text"
                 value={labelInput}
                 onChange={(e) => setLabelInput(e.target.value)}
-                placeholder="Assign Name / Label"
+                placeholder="Assign Name / Note"
                 className="edit-label-input"
                 autoFocus
               />
@@ -120,7 +120,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
                 className="icon-btn-confirm"
                 onClick={handleSaveLabel}
                 disabled={isSaving}
-                title="Save label"
+                title="Save"
               >
                 <Check size={14} />
               </button>
@@ -138,7 +138,7 @@ export const PersonCard: React.FC<PersonCardProps> = ({
                 {person.label ? (
                   person.label
                 ) : (
-                  <span className="unlabeled-text">Person #{person.id}</span>
+                  <span className="unlabeled-text">Unlabeled #{person.id}</span>
                 )}
               </h3>
               {onUpdateLabel && (
@@ -148,14 +148,14 @@ export const PersonCard: React.FC<PersonCardProps> = ({
                     e.stopPropagation();
                     setIsEditing(true);
                   }}
-                  title="Edit label / name"
+                  title="Edit name or note"
                 >
                   <Edit3 size={14} />
                 </button>
               )}
             </div>
           )}
-          <span className="person-id-tag">ID: #{person.id}</span>
+          <span className="person-id-tag">Profile ID: #{person.id}</span>
         </div>
       </div>
 
@@ -178,14 +178,14 @@ export const PersonCard: React.FC<PersonCardProps> = ({
               className="action-btn-danger"
               onClick={handleDelete}
               disabled={isDeleting}
-              title="Delete Person"
+              title="Remove Person"
             >
               <Trash2 size={15} />
             </button>
           )}
           {onSelect && (
-            <button className="action-btn-view" title="View sighting timeline">
-              <span>Details</span>
+            <button className="action-btn-view" title="View activity history">
+              <span>View Profile</span>
               <ChevronRight size={15} />
             </button>
           )}

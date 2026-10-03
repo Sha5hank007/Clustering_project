@@ -99,9 +99,9 @@ export const PersonsPage: React.FC = () => {
     <div className="page-container persons-page animate-fade-in">
       <div className="page-header">
         <div className="page-title-group">
-          <h2 className="page-title">Known Persons Database</h2>
+          <h2 className="page-title">People Directory</h2>
           <p className="page-subtitle">
-            All facial identity centroids stored in pgvector with multi-camera sighting history
+            Directory of recognized individuals with their profile details and sighting logs across cameras
           </p>
         </div>
 
@@ -118,7 +118,7 @@ export const PersonsPage: React.FC = () => {
             <Search size={16} className="search-icon" />
             <input
               type="text"
-              placeholder="Search by person name / label..."
+              placeholder="Search by person name or note..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="search-input"
@@ -148,9 +148,9 @@ export const PersonsPage: React.FC = () => {
             onClick={() => setLabeledOnly(!labeledOnly)}
           >
             <Filter size={13} />
-            <span>Labeled Only</span>
+            <span>Named Only</span>
           </button>
-          <span className="total-badge">{persons.length} Persons</span>
+          <span className="total-badge">{persons.length} Individuals</span>
         </div>
       </div>
 
@@ -159,7 +159,7 @@ export const PersonsPage: React.FC = () => {
         <div className="error-card glass-panel animate-fade-in">
           <AlertCircle size={24} className="error-icon" />
           <div className="error-details">
-            <h4>Error Loading Database</h4>
+            <h4>Error Loading Directory</h4>
             <p>{error}</p>
           </div>
           <button className="btn-secondary-sm" onClick={fetchPersonsList}>
@@ -172,7 +172,7 @@ export const PersonsPage: React.FC = () => {
       {isLoading && (
         <div className="loading-grid glass-panel">
           <div className="spinner"></div>
-          <p>Querying PostgreSQL & pgvector centroids...</p>
+          <p>Loading directory records...</p>
         </div>
       )}
 
@@ -195,11 +195,11 @@ export const PersonsPage: React.FC = () => {
       {!isLoading && !error && persons.length === 0 && (
         <div className="empty-state glass-panel animate-fade-in">
           <Users size={48} className="empty-icon" />
-          <h3>No Persons Found</h3>
+          <h3>No Records Found</h3>
           <p>
             {searchQuery || labeledOnly
               ? 'No identity records match your search criteria.'
-              : 'No persons recorded in the database yet. Upload a video in the Ingestion tab or identify a suspect.'}
+              : 'No individuals recorded in the system yet. Upload video footage or search an image to get started.'}
           </p>
         </div>
       )}
@@ -217,7 +217,7 @@ export const PersonsPage: React.FC = () => {
                   <h3 className="modal-title">
                     {selectedPersonDetail?.label || `Person #${selectedPersonId}`}
                   </h3>
-                  <span className="modal-sub">ID: #{selectedPersonId} • ArcFace 512-d Centroid</span>
+                  <span className="modal-sub">ID: #{selectedPersonId} • Verified Profile</span>
                 </div>
               </div>
               <button className="modal-close-btn" onClick={handleCloseDetail}>
@@ -229,7 +229,7 @@ export const PersonsPage: React.FC = () => {
               {isDetailLoading ? (
                 <div className="modal-loading">
                   <div className="spinner"></div>
-                  <p>Loading sighting history...</p>
+                  <p>Loading activity history...</p>
                 </div>
               ) : selectedPersonDetail ? (
                 <div className="detail-content">
@@ -258,14 +258,14 @@ export const PersonsPage: React.FC = () => {
                       onClick={() => setDetailTab('timeline')}
                     >
                       <Clock size={14} />
-                      <span>Timeline Events ({selectedPersonDetail.sightings.length})</span>
+                      <span>Activity Timeline ({selectedPersonDetail.sightings.length})</span>
                     </button>
                     <button
                       className={`detail-tab-btn ${detailTab === 'crops' ? 'active' : ''}`}
                       onClick={() => setDetailTab('crops')}
                     >
                       <Layers size={14} />
-                      <span>Archived Crops</span>
+                      <span>Captured Photos</span>
                     </button>
                   </div>
 
