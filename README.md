@@ -1,293 +1,230 @@
+# FaceTrack
 
-# Face Track
+FaceTrack indexes people seen in uploaded video or live camera streams. It uses SCRFD face detection and ArcFace embeddings, stores people and sightings in PostgreSQL with pgvector, and provides a React interface for search and administration.
 
-Automated face recognition and sighting history system. Processes video footage from any source, identifies faces using deep learning, builds a searchable database of every person seen, and enables forensic identification by uploading a suspect's photo.
+## Project Layout
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Video Upload API                                           │
-│  POST /api/ingest → save file → queue job                   │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Ingest Worker (background process)                         │
-│                                                             │
-│  Video → Frame Sampling (5fps) → SCRFD Face Detection       │
-│  → Quality Gate (blur/size/pose) → IoU Tracker              │
-│  → Track Death → ArcFace Embedding (512-d vector)           │
-│  → Cosine Match Against Known Persons → Store in DB         │
-│                                                             │
-│  Processes in 5-min chunks with crash resume                │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  PostgreSQL + pgvector                                      │
-│                                                             │
-│  persons      — centroid embeddings + metadata              │
-│  sightings    — every visit with timestamp + camera          │
-│  ingest_jobs  — upload queue + progress tracking             │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Identification API                                         │
-│  POST /api/identify → upload suspect photo → find matches   │
-│  Response: person history, timestamps, cameras, face crops  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Tech Stack
-
-| Component        | Technology                                  |
-| ---------------- | ------------------------------------------- |
-| Face Detection   | SCRFD (det_10g.onnx) via ONNX Runtime       |
-| Face Recognition | ArcFace (w600k_r50.onnx) via ONNX Runtime   |
-| Face Tracking    | IoU + center distance (no model, pure math) |
-| Database         | PostgreSQL 16 + pgvector                    |
-| Backend API      | FastAPI + psycopg2                          |
-| Video I/O        | OpenCV                                      |
-| Configuration    | pydantic-settings + .env                    |
-
-## Project Structure
-
-```
+```text
 face-track/
-├── .env.example
-├── docker-compose.yml
 ├── backend/
-│   ├── config.py                 — all settings from .env
-│   ├── alembic.ini
-│   │
-│   ├── db/
-│   │   ├── models.py             — Person, Sighting, IngestJob ORM models
-│   │   ├── session.py            — async engine (for future use)
-│   │   └── migrations/versions/
-│   │       ├── 001_initial.py    — persons + sightings tables
-│   │       └── 002_ingest_jobs.py — ingest_jobs table + job_id on sightings
-│   │
-│   ├── sources/                  — frame acquisition
-│   │   ├── base.py               — FrameSource abstract interface
-│   │   ├── webcam.py             — desktop camera
-│   │   ├── rtsp.py               — CCTV with reconnection
-│   │   ├── file.py               — video files with seek/resume
-│   │   └── factory.py            — creates source from .env
-│   │
-│   ├── pipeline/                 — ingestion pipeline
-│   │   ├── detector.py           — SCRFD ONNX face detection
-│   │   ├── quality.py            — blur, size, pose filtering
-│   │   ├── tracker.py            — multi-face IoU tracker
-│   │   ├── embedder.py           — ArcFace alignment + embedding
-│   │   ├── matcher.py            — cosine search, person create/update
-│   │   ├── cooldown.py           — duplicate suppression (configurable window)
-│   │   ├── retention.py          — crop storage policy
-│   │   ├── worker.py             — live camera worker (debug/testing)
-│   │   └── ingest_worker.py      — async video processing with chunking
-│   │
-│   ├── api/                      — REST API
-│   │   ├── main.py               — FastAPI app, CORS, model preloading
-│   │   ├── deps.py               — shared dependencies
-│   │   └── routers/
-│   │       ├── ingest.py         — video upload + job status
-│   │       ├── identify.py       — suspect photo identification
-│   │       ├── persons.py        — person CRUD + labeling
-│   │       ├── crops.py          — serve face crop images
-│   │       └── stats.py          — dashboard statistics
-│   │
-│   └── models/                   — ONNX model files (gitignored)
-│       ├── det_10g.onnx
-│       └── w600k_r50.onnx
-│
+│   ├── .env.example       # Copy to backend/.env
+│   ├── models/            # ONNX files go here
+│   ├── api/               # FastAPI application and routers
+│   └── pipeline/          # Video processing worker
 ├── data/
-│   ├── crops/                    — stored face images (gitignored)
-│   └── ingest/                   — temp uploaded videos (gitignored)
-│
-└── frontend/                     — React UI (in development)
+│   ├── ingest/            # Uploaded source videos
+│   └── crops/             # Saved face crops
+├── frontend/              # React + Vite application
+└── docker-compose.yml     # PostgreSQL + pgvector service
 ```
 
-## Setup
+## Requirements
 
-### Prerequisites
+- Python 3.11 or newer
+- Node.js 18 or newer and npm
+- Docker Desktop with Compose, or a PostgreSQL 16 server with the `vector` extension
+- The two ONNX models described below
 
-- Python 3.11+
-- PostgreSQL with pgvector extension
+## 1. Configure the Environment
 
-### Installation
+The backend reads its configuration from **`backend/.env`**. From the repository root, copy the example:
+
+```powershell
+Copy-Item backend/.env.example backend/.env
+```
+
+Or in Linux/WSL:
 
 ```bash
-cd face-track/backend
-python -m venv .venv
+cp backend/.env.example backend/.env
+```
 
-# Windows
-.venv\Scripts\activate
+The example contains the complete set of supported settings; keep its defaults or edit only the values you need to customize. Ensure `DATABASE_URL` matches your PostgreSQL credentials. The included Compose database defaults are `facetrack` / `changeme` / `facetrack` (user / password / database). Paths in this file are relative to the backend process working directory; run the backend commands from `backend/`.
 
-# Linux/Mac
+Google sign-in is optional. To enable it, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `backend/.env` and configure this authorized redirect URI in Google Cloud:
+
+```text
+http://localhost:8000/api/auth/google/callback
+```
+
+## 2. Download the Face Models
+
+Download the official **buffalo_l** model archive from the [InsightFace v0.7 release](https://github.com/deepinsight/insightface/releases/tag/v0.7) (`buffalo_l.zip`, approximately 275 MB). The [direct archive link](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip) is also available.
+
+Extract the archive and copy these two files into **`backend/models/`**:
+
+```text
+backend/models/det_10g.onnx       # SCRFD face detector
+backend/models/w600k_r50.onnx     # ArcFace face recognizer
+```
+
+The configured names must match `DETECTOR_MODEL` and `RECOGNIZER_MODEL` in `backend/.env`. The application loads these files when the API starts; it will fail startup if they are missing. The models are not stored in this repository. Review the model publisher's licensing terms before use.
+
+## 3. Start PostgreSQL and Initialize the Database
+
+From the repository root, start the PostgreSQL 16 + pgvector container:
+
+```bash
+docker compose up -d db
+```
+
+Create the backend environment and install dependencies. Run the commands from `backend/`:
+
+```powershell
+cd backend
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Linux/WSL alternative:
+
+```bash
+cd backend
+python3.11 -m venv .venv
 source .venv/bin/activate
-
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### Configuration
-
-```bash
-copy .env.example .env
-```
-
-Edit `.env` and set your database credentials:
-
-```env
-DATABASE_URL=postgresql+asyncpg://your_user:your_password@localhost:5432/facetrack
-```
-
-### Database Setup
-
-```sql
-CREATE DATABASE facetrack;
-\c facetrack
-CREATE EXTENSION vector;
-```
+Apply all database migrations and create the first admin account:
 
 ```bash
 alembic upgrade head
+python create_admin.py
 ```
 
-### Model Download
+The admin creation command prompts for an email and password. Sign in with those credentials, then create shops and manager/guard accounts in the UI or through the admin API.
 
-Download `buffalo_l.zip` from https://github.com/deepinsight/insightface/releases/tag/v0.7
+To use an existing local PostgreSQL installation instead of Docker, create a database named `facetrack`, enable pgvector with `CREATE EXTENSION vector;`, and set `DATABASE_URL` to that server before running migrations.
 
-Extract and place these two files in `backend/models/`:
+## 4. Run the Application
 
-```
-backend/models/
-├── det_10g.onnx      (SCRFD face detector)
-└── w600k_r50.onnx    (ArcFace face recognizer)
-```
+Run each process in its own terminal. Activate the backend virtual environment and use `backend/` as the working directory for both backend commands.
 
-Delete the other .onnx files from the zip — they're not needed.
-
-### Running
-
-Two terminals required:
+**Terminal 1: API**
 
 ```bash
-# Terminal 1 — API server
 cd backend
-uvicorn api.main:app --reload --port 8000
+# Activate .venv if it is not already active
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-# Terminal 2 — Background ingest worker
+The API loads the ONNX models at startup. Interactive API documentation is at <http://localhost:8000/docs>; health check: <http://localhost:8000/api/health>.
+
+**Terminal 2: video ingest worker**
+
+```bash
 cd backend
+# Activate .venv if it is not already active
 python -m pipeline.ingest_worker
 ```
 
-### Testing
+The API accepts video uploads and queues jobs; the worker must be running to process those queued jobs.
 
-Open http://localhost:8000/docs for interactive Swagger UI.
-
-**Upload a video for processing:**
+**Terminal 3: frontend**
 
 ```bash
-curl -X POST http://localhost:8000/api/ingest \
-  -F "video=@video.mp4" \
-  -F "camera_id=entrance" \
-  -F "recorded_at=2026-08-27T14:00:00"
+cd frontend
+npm install
+npm run dev
 ```
 
-**Check processing status:**
+Open <http://localhost:3000>. Vite proxies `/api` calls to `http://127.0.0.1:8000`. The frontend also uses `http://localhost:8000` directly for authenticated crop image fetches.
 
-```bash
-curl http://localhost:8000/api/ingest/status/{job_id}
+## Authentication and Roles
+
+Sign-in returns a JWT. Send it on protected API requests as:
+
+```http
+Authorization: Bearer <token>
 ```
 
-**Identify a person:**
+The frontend attaches this header automatically. `/api/health`, login, and Google OAuth entry/callback are public; other API routes require authentication. Admins can access data across shops in their tenant. Managers and guards are scoped to their assigned shop. Admin upload, stream creation, and identification filters can specify shop IDs where noted below.
 
-```bash
-curl -X POST http://localhost:8000/api/identify -F "image=@suspect.jpg"
-```
+## API Reference
 
-**List all known persons:**
+All routes use the `/api` prefix. Interactive request schemas are also available from `/docs` while the API is running.
 
-```bash
-curl http://localhost:8000/api/persons
-```
+### Auth
 
-**Label a person:**
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/auth/login` | JSON `{ "email": "...", "password": "..." }`; returns JWT and user information. |
+| `GET` | `/auth/me` | Return current user identity and role. |
+| `GET` | `/auth/google/login` | Begin optional Google OAuth. |
+| `GET` | `/auth/google/callback` | OAuth callback; user must already exist in FaceTrack. |
 
-```bash
-curl -X PATCH http://localhost:8000/api/persons/1/label \
-  -H "Content-Type: application/json" \
-  -d '{"label": "John"}'
-```
+### Video Ingestion
 
-## API Endpoints
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/ingest` | Multipart form: `video`, `camera_id`, `recorded_at` (ISO-8601), and `shop_id` for admins. Managers/guards use their assigned shop. Returns a queued `job_id`. |
+| `GET` | `/ingest/jobs?page=1&limit=10` | Paginated jobs visible to the current user's shop/tenant. Returns `jobs`, `total`, `page`, `limit`, and `total_pages`. |
+| `GET` | `/ingest/status/{job_id}` | Full processing status, progress, counts, and any error. |
 
-| Method | Endpoint                        | Description                            |
-| ------ | ------------------------------- | -------------------------------------- |
-| POST   | `/api/ingest`                 | Upload video for background processing |
-| GET    | `/api/ingest/status/{job_id}` | Check job progress                     |
-| GET    | `/api/ingest/jobs`            | List all ingest jobs                   |
-| POST   | `/api/identify`               | Upload suspect photo, find matches     |
-| GET    | `/api/persons`                | List all persons (paginated)           |
-| GET    | `/api/persons/{id}`           | Person detail + sighting history       |
-| PATCH  | `/api/persons/{id}/label`     | Assign name to a person                |
-| DELETE | `/api/persons/{id}`           | Remove person + all data               |
-| GET    | `/api/crops/{path}`           | Serve stored face images               |
-| GET    | `/api/stats`                  | Dashboard statistics                   |
-| GET    | `/api/health`                 | Health check                           |
+Job statuses include `queued`, `processing`, `paused`, `complete`, and `failed`.
 
-## How It Works
+### Identification and People
 
-### Ingestion Pipeline
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/identify` | Multipart form: `image`; optional `camera_id`; admins may repeat `shop_ids` to search selected tenant shops (omit for all tenant shops). Returns best match and sightings. |
+| `GET` | `/persons?page=1&limit=20` | Paginated people in the caller's scope; optional `job_id` limits results to one uploaded video. |
+| `GET` | `/persons/{person_id}?page=1&limit=20` | Person details and paginated sightings; optional `job_id` filter. |
+| `PATCH` | `/persons/{person_id}/label` | JSON `{ "label": "Name" }`; admin/manager only. |
+| `DELETE` | `/persons/{person_id}` | Delete a person and associated data; admin/manager only. |
+| `GET` | `/crops/{person_folder}/{filename}` | Read a crop image after scope authorization. |
 
-1. **Frame Sampling** — video at 25fps is sampled at 5fps. 80% of frames are never decoded.
-2. **Face Detection** — SCRFD detects faces, returns bounding boxes + 5 landmarks per face.
-3. **Quality Gate** — rejects faces that are too small (<80px), blurry (Laplacian variance), or turned sideways (>30° yaw).
-4. **Tracking** — IoU + center distance matching links faces across frames. One track = one continuous appearance. The tracker stores the best 5 crops per track by quality score.
-5. **Embedding** — only runs when a track dies (person leaves frame). Aligns the best crops using landmarks, runs ArcFace to produce a 512-dimensional vector. One embedding per visit, not per frame.
-6. **Identity Matching** — cosine similarity against all known person centroids. Match above threshold → existing person. No match → new person created.
-7. **Cooldown** — suppresses duplicate sightings within a configurable window (default 4 hours).
-8. **Retention** — saves one best-quality face crop per person per 2-day window.
+### Live Streams
 
-### Chunked Processing
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/streams` | JSON `{ "name": "Entrance", "url": "rtsp://...", "camera_id": "cam-01", "shop_id": 1 }`. Admins must provide a tenant shop; managers/guards use their assigned shop. URLs must start with `rtsp://` or `webcam://`. |
+| `GET` | `/streams` | List streams in the caller's scope. |
+| `GET` | `/streams/{stream_id}` | Stream details. |
+| `PATCH` | `/streams/{stream_id}/pause` | Pause a running stream. |
+| `PATCH` | `/streams/{stream_id}/resume` | Resume a paused stream. |
+| `PATCH` | `/streams/{stream_id}/stop` | Stop a stream; admin/manager only. |
+| `DELETE` | `/streams/{stream_id}` | Stop and remove the stream record; admin/manager only. |
 
-Videos are processed in configurable chunks (default 5 minutes). After each chunk:
+### Administration and Stats
 
-- All active tracks are flushed and processed
-- Progress checkpoint is saved to database
-- On crash, processing resumes from last checkpoint
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/admin/tenants` | Create tenant; admin only. |
+| `POST` | `/admin/shops` | JSON `{ "name": "Shop", "address": "..." }`; admin only. |
+| `GET` | `/admin/shops` | List shops in the admin's tenant. |
+| `POST` | `/admin/users` | Create a user with `email`, `password`, `role` (`admin`, `manager`, or `guard`), and `shop_id` where required. |
+| `GET` | `/admin/users` | List users visible to admin/manager. |
+| `DELETE` | `/admin/users/{user_id}` | Delete a user visible to admin/manager; cannot delete yourself. |
+| `PATCH` | `/admin/jobs/{job_id}/control` | JSON `{ "action": "pause" }`, `resume`, or `cancel`; admin/manager only. |
+| `GET` | `/stats` | Scoped counts and distinct camera IDs for the dashboard and camera filters. |
+| `GET` | `/health` | API health status; no authentication required. |
 
-### Identification
+## Useful Configuration
 
-Upload a suspect's photo → detect face → generate embedding → cosine search against all stored person centroids → return full sighting history with timestamps, cameras, and face crops.
+All values can be set in `backend/.env`; defaults are defined in `backend/config.py`.
 
-## Configuration
+| Variable | Default | Description |
+|---|---:|---|
+| `DATABASE_URL` | Local PostgreSQL URL | Database connection. |
+| `MODEL_DIR` | `./models` | Model directory relative to `backend/`. |
+| `DETECTOR_MODEL` | `det_10g.onnx` | SCRFD ONNX filename. |
+| `RECOGNIZER_MODEL` | `w600k_r50.onnx` | ArcFace ONNX filename. |
+| `DET_SIZE` | `320,320` | Detector input width and height. |
+| `FPS_SAMPLE_RATE` | `5` | Video frames sampled per second. |
+| `CHUNK_DURATION_MINUTES` | `5` | Ingest processing chunk length. |
+| `INGEST_WORKERS` | `2` | Concurrent ingest workers. |
+| `INGEST_DIR` | `../data/ingest` | Uploaded video storage. |
+| `CROP_STORAGE_DIR` | `../data/crops` | Saved face crop storage. |
+| `JWT_SECRET` | Development placeholder | Set a long random value outside local development. |
+| `JWT_EXPIRY_HOURS` | `24` | JWT lifetime. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Empty | Optional Google OAuth credentials. |
 
-All settings are in `.env`. Key parameters:
+## Troubleshooting
 
-| Setting                    | Default | Description                            |
-| -------------------------- | ------- | -------------------------------------- |
-| `DET_SIZE`               | 640,640 | Detection input resolution             |
-| `DET_THRESHOLD`          | 0.6     | Minimum detection confidence           |
-| `DETECT_INTERVAL`        | 3       | Run detection every Nth frame          |
-| `FPS_SAMPLE_RATE`        | 5       | Frames to process per second           |
-| `MIN_FACE_PX`            | 80      | Minimum face width in pixels           |
-| `BLUR_THRESHOLD`         | 50.0    | Minimum sharpness (Laplacian variance) |
-| `MAX_YAW_DEGREES`        | 30      | Maximum face rotation angle            |
-| `MAX_MISSES`             | 15      | Frames before track dies               |
-| `MATCH_THRESHOLD`        | 0.5     | Cosine similarity for person match     |
-| `COOLDOWN_HOURS`         | 4       | Duplicate suppression window           |
-| `RETENTION_WINDOW_DAYS`  | 2       | One crop per person per N days         |
-| `CHUNK_DURATION_MINUTES` | 5       | Processing chunk size                  |
-| `INGEST_WORKERS`         | 2       | Parallel processing workers            |
-
-## Performance
-
-- **Detection:** ~30ms per frame (SCRFD at 640×640 on CPU)
-- **Embedding:** ~25ms per face crop (ArcFace)
-- **Identification:** ~60ms per query (detect + embed + DB search)
-- **Video processing:** ~2-3 minutes per 15 minutes of 1080p footage
-- **Storage:** ~610 MB per year for 200 persons (embeddings + crops)
-
-Note: Processing speed depends heavily on video codec. H.264 (standard CCTV output) processes at ~25x real-time. Non-standard codecs may be significantly slower.
+- **API exits while starting:** confirm both ONNX files exist under `backend/models/` and `MODEL_DIR` is correct.
+- **Database connection error:** confirm PostgreSQL is running and the username/password/database in `DATABASE_URL` match the database service.
+- **Uploads stay queued:** make sure `python -m pipeline.ingest_worker` is running from `backend/`.
+- **No admin shops:** create at least one shop before creating manager/guard users or uploading as an admin.
+- **Port already in use:** stop the existing process using port `8000` or `3000`, or change the API/frontend port and update the corresponding frontend/API URLs.

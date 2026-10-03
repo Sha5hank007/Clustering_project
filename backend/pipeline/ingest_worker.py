@@ -205,23 +205,6 @@ def process_job(job: dict, detector: Detector, embedder: Embedder) -> None:
                 )
                 last_log_time = now
 
-            # Chunk boundary
-            current = source.current_frame
-            if current - chunk_start >= chunk_frames:
-                sightings_added += _flush_tracks(
-                    tracker, embedder, job["camera_id"], conn, job_id, shop_id, persons_found
-                )
-                tracker = Tracker()
-                _update_progress(conn, job_id, current, len(persons_found), sightings_added)
-
-                total = job["total_frames"] or 1
-                logger.info(
-                    "CHUNK DONE: %d/%d (%.1f%%) — %d persons, %d sightings"
-                    % (current, total, current / total * 100,
-                       len(persons_found), sightings_added)
-                )
-                chunk_start = current
-
         # Complete
         total = job["total_frames"] or source.current_frame
         _update_progress(conn, job_id, total, len(persons_found), sightings_added)

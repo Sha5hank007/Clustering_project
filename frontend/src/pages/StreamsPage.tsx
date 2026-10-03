@@ -29,6 +29,7 @@ export default function StreamsPage() {
   const [url, setUrl] = useState('');
   const [cameraId, setCameraId] = useState('');
   const [shopId, setShopId] = useState<number | ''>('');
+  const [sourceType, setSourceType] = useState<'rtsp' | 'webcam' | 'youtube'>('rtsp');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [shopError, setShopError] = useState('');
@@ -59,16 +60,37 @@ export default function StreamsPage() {
     return () => clearInterval(interval);
   }, [isAdmin]);
 
+  const getPlaceholder = () => {
+    switch (sourceType) {
+      case 'rtsp': return 'rtsp://192.168.1.100:554/stream';
+      case 'webcam': return 'webcam://0';
+      case 'youtube': return 'https://www.youtube.com/live/...';
+    }
+  };
+
+  const buildUrl = (): string => {
+    const trimmed = url.trim();
+    if (sourceType === 'webcam') {
+      const num = trimmed.replace(/\D/g, '') || '0';
+      return `webcam://${num}`;
+    }
+    return trimmed;
+  };
+
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isAdmin && !shopId) {
       setError('Please select a shop');
       return;
     }
+    if (!url.trim()) {
+      setError('Please enter a stream URL');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const body: any = { name, url, camera_id: cameraId };
+      const body: any = { name, url: buildUrl(), camera_id: cameraId };
       if (isAdmin && shopId) body.shop_id = shopId;
       await api.post('/streams', body);
       setName(''); setUrl(''); setCameraId(''); setShopId('');
@@ -102,6 +124,13 @@ export default function StreamsPage() {
     }
   };
 
+  const sourceIcon = (url: string) => {
+    if (url.startsWith('webcam://')) return '📷';
+    if (url.startsWith('rtsp://')) return '📹';
+    if (url.includes('youtube.com') || url.includes('youtu.be')) return '▶️';
+    return '🔗';
+  };
+
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 16px' }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', marginBottom: 24 }}>
@@ -119,17 +148,12 @@ export default function StreamsPage() {
         <form onSubmit={handleAdd}>
           {isAdmin && (
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#475569', marginBottom: 4 }}>
-                Shop *
-              </label>
+              <label style={labelStyle}>Shop *</label>
               <select
                 value={shopId}
                 onChange={e => setShopId(e.target.value ? Number(e.target.value) : '')}
                 required
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: '1px solid #cbd5e1', fontSize: 14, background: '#fff'
-                }}
+                style={selectStyle}
               >
                 <option value="">Select a shop...</option>
                 {shops.map(s => (
@@ -139,46 +163,72 @@ export default function StreamsPage() {
               {shopError && <div style={{ color: '#dc2626', fontSize: 13, marginTop: 4 }}>{shopError}</div>}
             </div>
           )}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div>
-              <label style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#475569', marginBottom: 4 }}>
-                Stream Name
-              </label>
+              <label style={labelStyle}>Stream Name</label>
               <input
                 value={name} onChange={e => setName(e.target.value)} required
                 placeholder="e.g. Front Door Camera"
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: '1px solid #cbd5e1', fontSize: 14, boxSizing: 'border-box'
-                }}
+                style={inputStyle}
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#475569', marginBottom: 4 }}>
-                Camera ID
-              </label>
+              <label style={labelStyle}>Camera ID</label>
               <input
                 value={cameraId} onChange={e => setCameraId(e.target.value)} required
                 placeholder="e.g. cam-01"
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: '1px solid #cbd5e1', fontSize: 14, boxSizing: 'border-box'
-                }}
+                style={inputStyle}
               />
             </div>
           </div>
+
+          {/* Source Type Selector */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>Source Type</label>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              {([
+                { key: 'rtsp', label: '📹 RTSP Camera' },
+                { key: 'webcam', label: '📷 Webcam' },
+                { key: 'youtube', label: '▶️ YouTube Live' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => { setSourceType(opt.key); setUrl(''); }}
+                  style={{
+                    padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 0.15s',
+                    border: sourceType === opt.key ? '2px solid #2563eb' : '1px solid #e2e8f0',
+                    background: sourceType === opt.key ? '#eff6ff' : '#fff',
+                    color: sourceType === opt.key ? '#2563eb' : '#475569',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#475569', marginBottom: 4 }}>
-              Stream URL
+            <label style={labelStyle}>
+              {sourceType === 'webcam' ? 'Device Number' : 'Stream URL'}
             </label>
             <input
               value={url} onChange={e => setUrl(e.target.value)} required
-              placeholder="rtsp://192.168.1.100:554/stream or webcam://0"
-              style={{
-                width: '100%', padding: '10px 12px', borderRadius: 8,
-                border: '1px solid #cbd5e1', fontSize: 14, boxSizing: 'border-box'
-              }}
+              placeholder={getPlaceholder()}
+              style={inputStyle}
             />
+            {sourceType === 'youtube' && (
+              <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0' }}>
+                Only YouTube Live streams are supported (not regular videos). Requires yt-dlp configured on the server.
+              </p>
+            )}
+            {sourceType === 'webcam' && (
+              <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0' }}>
+                Enter device number (e.g. 0 for default camera). Opens camera on the machine running the stream worker.
+              </p>
+            )}
           </div>
           {error && <p style={{ color: '#dc2626', fontSize: 14, marginBottom: 12 }}>{error}</p>}
           <button
@@ -210,6 +260,7 @@ export default function StreamsPage() {
             }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <span style={{ fontSize: 16 }}>{sourceIcon(s.url)}</span>
                   <span style={{ fontWeight: 600, fontSize: 16, color: '#0f172a' }}>{s.name}</span>
                   <span style={{
                     fontSize: 12, fontWeight: 600, color: '#fff',
@@ -220,7 +271,7 @@ export default function StreamsPage() {
                   </span>
                 </div>
                 <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
-                  {s.camera_id} &middot; {s.url}
+                  {s.camera_id} &middot; {s.url.length > 60 ? s.url.substring(0, 60) + '...' : s.url}
                 </p>
                 <p style={{ fontSize: 13, color: '#64748b', margin: '4px 0 0' }}>
                   {s.persons_found} persons &middot; {s.sightings_added} sightings
@@ -253,6 +304,20 @@ export default function StreamsPage() {
     </div>
   );
 }
+
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: 14, fontWeight: 500, color: '#475569', marginBottom: 4
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '10px 12px', borderRadius: 8,
+  border: '1px solid #cbd5e1', fontSize: 14, boxSizing: 'border-box'
+};
+
+const selectStyle: React.CSSProperties = {
+  width: '100%', padding: '10px 12px', borderRadius: 8,
+  border: '1px solid #cbd5e1', fontSize: 14, background: '#fff'
+};
 
 const btnStyle = (bg: string): React.CSSProperties => ({
   padding: '6px 14px', borderRadius: 6, border: 'none',

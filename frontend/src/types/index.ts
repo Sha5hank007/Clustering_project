@@ -25,6 +25,16 @@ export interface Sighting {
   crop_url: string | null;
 }
 
+export interface IngestCrop {
+  id: number;
+  person_id: number | null;
+  person_label: string | null;
+  camera_id: string;
+  seen_at: string | null;
+  quality_score: number | null;
+  crop_url: string | null;
+}
+
 export interface IngestJob {
   job_id: string;
   original_name: string;
@@ -40,6 +50,10 @@ export interface IngestJob {
   processed_frame?: number | null;
   error?: string | null;
   shop_id?: number | null;
+  crops_total?: number;
+  crops_page?: number;
+  crops_total_pages?: number;
+  crops?: IngestCrop[];
 }
 
 export interface Stream {

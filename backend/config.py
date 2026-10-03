@@ -54,10 +54,20 @@ class Settings(BaseSettings):
 
     # Debug
     debug_display: bool = True
-    
+
     # Auth
     jwt_secret: str = "change-this-to-a-random-string"
     jwt_expiry_hours: int = 24
+
+    # Google OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
+    frontend_url: str = "http://localhost:3000"
+    
+    
+    # YouTube (yt-dlp)
+    yt_dlp_path: str = "C:\\Users\\GANNOJU SHAHSANK\\Downloads\\YOUTUBEDLP\\yt-dlp.exe"
 
     @property
     def det_size_tuple(self) -> tuple[int, int]:

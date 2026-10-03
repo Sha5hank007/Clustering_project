@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import { IngestJob } from '../types';
+import { cropUrl } from '../api/utils';
+import AuthenticatedImage from '../components/AuthenticatedImage';
 
 interface Shop {
   id: number;
@@ -26,6 +28,7 @@ export default function IngestPage() {
   const [selectedJob, setSelectedJob] = useState<IngestJob | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
+  const [cropPage, setCropPage] = useState(1);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [shopError, setShopError] = useState('');
@@ -40,10 +43,11 @@ export default function IngestPage() {
     }
   };
 
-  const selectJob = async (jobId: string) => {
+  const selectJob = async (jobId: string, requestedCropPage = 1) => {
     try {
-      const response = await api.get(`/ingest/status/${jobId}`);
+      const response = await api.get(`/ingest/status/${jobId}`, { params: { page: requestedCropPage, limit: 12 } });
       setSelectedJob(response.data);
+      setCropPage(response.data.crops_page || 1);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Unable to load video details');
     }
@@ -134,9 +138,51 @@ export default function IngestPage() {
           <span>Sightings: {selectedJob.sightings_added}</span>
         </div>
         {selectedJob.error && <div style={styles.error}>{selectedJob.error}</div>}
+
+        <div style={styles.gallerySection}>
+          <div style={styles.galleryHeader}>
+            <strong>Identified crops in this video</strong>
+            {(selectedJob.crops_total ?? 0) > 0 && (
+              <span style={styles.muted}>Page {selectedJob.crops_page || 1} of {selectedJob.crops_total_pages || 1}</span>
+            )}
+          </div>
+
+          {selectedJob.crops && selectedJob.crops.length > 0 ? (
+            <>
+              <div style={styles.galleryGrid}>
+                {selectedJob.crops.map(crop => (
+                  <div key={crop.id} style={styles.galleryItem}>
+                    {crop.crop_url ? <AuthenticatedImage src={cropUrl(crop.crop_url)} alt={crop.person_label || 'Detected person'} style={styles.cropImage} /> : <div style={styles.noImage}>No crop</div>}
+                    <div style={styles.cropMeta}>
+                      <span>{crop.person_label || 'Unknown'}</span>
+                      <span>{crop.camera_id}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {(selectedJob.crops_total_pages ?? 0) > 1 && (
+                <div style={styles.pagination}>
+                  <button type="button" onClick={() => {
+                    const nextPage = Math.max(1, (cropPage || 1) - 1);
+                    setCropPage(nextPage);
+                    if (selectedJob?.job_id) selectJob(selectedJob.job_id, nextPage);
+                  }} disabled={cropPage <= 1} style={styles.pageButton}>Previous</button>
+                  <span style={styles.muted}>Page {cropPage} of {selectedJob.crops_total_pages}</span>
+                  <button type="button" onClick={() => {
+                    const nextPage = Math.min(selectedJob.crops_total_pages || 1, (cropPage || 1) + 1);
+                    setCropPage(nextPage);
+                    if (selectedJob?.job_id) selectJob(selectedJob.job_id, nextPage);
+                  }} disabled={cropPage >= (selectedJob.crops_total_pages || 1)} style={styles.pageButton}>Next</button>
+                </div>
+              )}
+            </>
+          ) : (
+            <p style={styles.muted}>No identified crops for this upload yet.</p>
+          )}
+        </div>
       </div>}
       {jobs.length === 0 ? <p style={styles.muted}>No upload jobs yet.</p> : jobs.map(job => (
-        <button key={job.job_id} type="button" onClick={() => selectJob(job.job_id)} style={styles.jobButton}>
+        <button key={job.job_id} type="button" onClick={() => selectJob(job.job_id, 1)} style={styles.jobButton}>
           <div style={styles.job}><div><strong>{job.original_name}</strong><div style={styles.muted}>{job.camera_id} · {job.status}</div></div><div style={styles.progress}>{job.progress_percent.toFixed(1)}%</div></div>
         </button>
       ))}
@@ -164,6 +210,13 @@ const styles: Record<string, React.CSSProperties> = {
   jobButton: { display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer' },
   details: { background: '#eff6ff', border: '1px solid #bfdbfe', padding: 16, margin: '16px 0', borderRadius: 10, color: '#1e3a8a' },
   detailGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 10, fontSize: 13 },
+  gallerySection: { marginTop: 18, paddingTop: 18, borderTop: '1px solid #bfdbfe' },
+  galleryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 },
+  galleryGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 },
+  galleryItem: { background: '#fff', borderRadius: 10, padding: 8, border: '1px solid #dbeafe', boxShadow: '0 1px 2px rgba(15,23,42,0.06)' },
+  cropImage: { width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, display: 'block', background: '#f8fafc' },
+  noImage: { width: '100%', height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: '#e2e8f0', color: '#475569', fontSize: 12 },
+  cropMeta: { display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#334155', marginTop: 8, gap: 8 },
   pagination: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 18 },
   pageButton: { padding: '8px 14px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff', color: '#475569', cursor: 'pointer' },
   progress: { color: '#2563eb', fontWeight: 700 },

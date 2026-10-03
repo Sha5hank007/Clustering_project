@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from api.deps import get_db, get_current_user, get_current_scope, CurrentUser, Scope
+from api.routers.crops import crop_path_to_url
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,8 @@ def upload_video(
 @router.get("/ingest/status/{job_id}")
 def get_job_status(
     job_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=50),
     scope: Scope = Depends(get_current_scope),
     db=Depends(get_db),
 ):
@@ -110,6 +113,48 @@ def get_job_status(
     if row[5] and row[5] > 0:
         progress = round((row[6] or 0) / row[5] * 100, 1)
 
+    sighting_clause, sighting_params = scope.sql_filter("s.shop_id")
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM sightings s
+        WHERE s.job_id = %%s AND %s
+        """ % sighting_clause,
+        [job_id] + sighting_params,
+    )
+    crops_total = cur.fetchone()[0]
+
+    offset = (page - 1) * limit
+    cur.execute(
+        """
+        SELECT s.id, s.person_id, s.camera_id, s.seen_at, s.quality_score, s.crop_path, p.label
+        FROM sightings s
+        LEFT JOIN persons p ON p.id = s.person_id
+        WHERE s.job_id = %%s AND %s
+        ORDER BY s.seen_at DESC
+        LIMIT %%s OFFSET %%s
+        """ % sighting_clause,
+        [job_id] + sighting_params + [limit, offset],
+    )
+    crop_rows = cur.fetchall()
+
+    crops = []
+    for s in crop_rows:
+        crop_url = None
+        if s[5]:
+            crop_url = crop_path_to_url(s[5])
+        crops.append({
+            "id": s[0],
+            "person_id": s[1],
+            "person_label": s[6],
+            "camera_id": s[2],
+            "seen_at": s[3].isoformat() if s[3] else None,
+            "quality_score": s[4],
+            "crop_url": crop_url,
+        })
+
+    crops_total_pages = (crops_total + limit - 1) // limit if crops_total > 0 else 0
+
     return {
         "job_id": row[0], "original_name": row[1], "camera_id": row[2],
         "recorded_at": row[3].isoformat() if row[3] else None,
@@ -118,6 +163,10 @@ def get_job_status(
         "persons_found": row[9], "sightings_added": row[10],
         "created_at": row[11].isoformat() if row[11] else None,
         "shop_id": row[12],
+        "crops_total": crops_total,
+        "crops_page": page,
+        "crops_total_pages": crops_total_pages,
+        "crops": crops,
     }
 
 

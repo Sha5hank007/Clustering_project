@@ -8,6 +8,7 @@ PATCH  /api/streams/{id}/stop    — stop permanently
 DELETE /api/streams/{id}         — stop + delete record
 """
 import uuid
+import re
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -18,6 +19,18 @@ from api.deps import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+YOUTUBE_LIVE_PATTERNS = [
+    r"(https?://)?(www\.)?youtube\.com/live/",
+]
+
+
+def _is_valid_stream_url(url: str) -> bool:
+    if url.startswith(("rtsp://", "webcam://")):
+        return True
+    if any(re.match(p, url) for p in YOUTUBE_LIVE_PATTERNS):
+        return True
+    return False
 
 
 class CreateStream(BaseModel):
@@ -50,8 +63,8 @@ def add_stream(
 ):
     effective_shop_id = _resolve_shop_id(user, body.shop_id, db)
 
-    if not body.url.startswith(("rtsp://", "webcam://")):
-        raise HTTPException(400, "URL must start with rtsp:// or webcam://")
+    if not _is_valid_stream_url(body.url):
+        raise HTTPException(400, "URL must be rtsp://, webcam://, or a YouTube Live link (youtube.com/live/...)")
 
     stream_id = "s_" + uuid.uuid4().hex[:10]
     cur = db.cursor()
@@ -72,7 +85,7 @@ def add_stream(
     )
     db.commit()
 
-    logger.info("Stream created: id=%s shop=%d user=%d" % (stream_id, effective_shop_id, user.user_id))
+    logger.info("Stream created: id=%s shop=%d user=%d", stream_id, effective_shop_id, user.user_id)
     return {
         "stream_id": stream_id, "status": "running",
         "url": body.url, "camera_id": body.camera_id,
@@ -173,7 +186,7 @@ def stop_stream(stream_id: str, user: CurrentUser = Depends(require_role("admin"
     if row[1] == "stopped": raise HTTPException(400, "Already stopped")
     cur.execute("UPDATE live_streams SET status = 'stopped', stopped_at = now() WHERE id = %s", (stream_id,))
     db.commit()
-    logger.info("Stream %s stopped by user %d" % (stream_id, user.user_id))
+    logger.info("Stream %s stopped by user %d", stream_id, user.user_id)
     return {"stream_id": stream_id, "status": "stopped"}
 
 
@@ -191,7 +204,7 @@ def delete_stream(stream_id: str, user: CurrentUser = Depends(require_role("admi
     cur.execute("UPDATE sightings SET stream_id = NULL WHERE stream_id = %s", (stream_id,))
     cur.execute("DELETE FROM live_streams WHERE id = %s", (stream_id,))
     db.commit()
-    logger.info("Stream %s deleted by user %d" % (stream_id, user.user_id))
+    logger.info("Stream %s deleted by user %d", stream_id, user.user_id)
     return {"deleted": True, "stream_id": stream_id, "sightings_unlinked": count}
 
 
@@ -204,4 +217,4 @@ def _set_status(stream_id, new_status, required_status, scope, user, db):
     if row[1] != required_status: raise HTTPException(400, "Can only %s a %s stream (current: %s)" % (new_status, required_status, row[1]))
     cur.execute("UPDATE live_streams SET status = %s WHERE id = %s", (new_status, stream_id))
     db.commit()
-    logger.info("Stream %s → %s by user %d" % (stream_id, new_status, user.user_id))
+    logger.info("Stream %s → %s by user %d", stream_id, new_status, user.user_id)

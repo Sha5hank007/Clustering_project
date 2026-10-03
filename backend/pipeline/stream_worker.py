@@ -1,16 +1,24 @@
 """
-Stream worker. Processes live RTSP camera feeds.
+Stream worker. Processes live RTSP, webcam, and YouTube Live feeds.
 Run as: python -m pipeline.stream_worker
 
 Polls live_streams table for streams with status='running'.
-Connects to the RTSP URL, processes frames through the same
+Connects to the URL, processes frames through the same
 detect → track → embed → match → store pipeline.
+
+Supports:
+  - rtsp://    — IP cameras
+  - webcam://N — local webcam (testing)
+  - YouTube Live — resolved via yt-dlp (only live streams, not regular videos)
 
 Checks stream status every 30 seconds. Stops when paused/stopped.
 Handles disconnection via RTSPSource's built-in reconnect logic.
 """
 import time
 import logging
+import subprocess
+import json
+import re
 import cv2
 import psycopg2
 from sources.rtsp import RTSPSource
@@ -32,6 +40,42 @@ logger = logging.getLogger(__name__)
 _db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
 STATUS_CHECK_INTERVAL = 30  # seconds between DB status checks
+
+YOUTUBE_LIVE_PATTERN = r"(https?://)?(www\.)?youtube\.com/live/"
+
+
+def is_youtube_live_url(url: str) -> bool:
+    return bool(re.match(YOUTUBE_LIVE_PATTERN, url))
+
+
+def resolve_youtube_url(url: str) -> str:
+    """
+    Use yt-dlp to extract the direct stream URL.
+    Only works for YouTube Live streams.
+    """
+    yt_dlp_path = settings.yt_dlp_path
+    if not yt_dlp_path:
+        raise ValueError("YouTube URL provided but YT_DLP_PATH not configured in .env")
+
+    logger.info("Resolving YouTube URL via yt-dlp: %s", url)
+
+    try:
+        result = subprocess.run(
+            [yt_dlp_path, "-f", "best[ext=mp4]/best", "-g", "--no-warnings", url],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise ValueError("yt-dlp failed: %s" % result.stderr.strip())
+
+        direct_url = result.stdout.strip()
+        if not direct_url:
+            raise ValueError("yt-dlp returned empty URL")
+
+        logger.info("Resolved YouTube URL (length=%d chars)", len(direct_url))
+        return direct_url
+
+    except subprocess.TimeoutExpired:
+        raise ValueError("yt-dlp timed out resolving YouTube URL")
 
 
 def get_connection():
@@ -73,16 +117,20 @@ def pick_stream(conn) -> dict | None:
 def create_source(url: str) -> FrameSource:
     """
     Create the right frame source based on URL.
-    Supports rtsp:// for real cameras and webcam://N for testing.
+    Supports rtsp://, webcam://N, and YouTube Live streams.
     """
     if url.startswith("webcam://"):
         device_id = int(url.replace("webcam://", ""))
-        logger.info("Opening webcam device %d" % device_id)
+        logger.info("Opening webcam device %d", device_id)
         return WebcamSource(device_id)
     elif url.startswith("rtsp://"):
         return RTSPSource(url)
+    elif is_youtube_live_url(url):
+        direct_url = resolve_youtube_url(url)
+        logger.info("Opening YouTube Live stream via direct URL")
+        return RTSPSource(direct_url)
     else:
-        raise ValueError("Unsupported stream URL: %s (use rtsp:// or webcam://)" % url)
+        raise ValueError("Unsupported stream URL: %s (use rtsp://, webcam://, or a YouTube Live link)" % url)
 
 
 def process_stream(
@@ -96,8 +144,8 @@ def process_stream(
     camera_id = stream["camera_id"]
 
     logger.info(
-        "Connecting to stream %s: %s (camera=%s, shop=%d)"
-        % (stream_id, stream["url"], camera_id, shop_id)
+        "Connecting to stream %s: %s (camera=%s, shop=%d)",
+        stream_id, stream["url"], camera_id, shop_id,
     )
 
     conn = get_connection()
@@ -105,8 +153,7 @@ def process_stream(
     try:
         source = create_source(stream["url"])
     except Exception as e:
-        logger.error("Cannot connect to stream %s: %s" % (stream_id, e))
-        # Mark as failed but don't stop — might be temporary
+        logger.error("Cannot connect to stream %s: %s", stream_id, e)
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE live_streams SET status = 'stopped', stopped_at = now() WHERE id = %s",
@@ -116,7 +163,7 @@ def process_stream(
         conn.close()
         return
 
-    logger.info("Stream %s connected. Processing frames..." % stream_id)
+    logger.info("Stream %s connected. Processing frames...", stream_id)
 
     tracker = Tracker()
     detect_count = 0
@@ -128,7 +175,7 @@ def process_stream(
     frame_interval = 1.0 / settings.fps_sample_rate
     last_frame_time = 0.0
     consecutive_failures = 0
-    max_failures = 100  # stop after 100 consecutive failed reads
+    max_failures = 100
 
     try:
         while True:
@@ -137,8 +184,8 @@ def process_stream(
             if not ok:
                 consecutive_failures += 1
                 if consecutive_failures > max_failures:
-                    logger.error("Stream %s: %d consecutive failures, stopping" % (
-                        stream_id, max_failures))
+                    logger.error("Stream %s: %d consecutive failures, stopping",
+                        stream_id, max_failures)
                     break
                 time.sleep(0.1)
                 continue
@@ -182,8 +229,7 @@ def process_stream(
 
                 status = _check_status(conn, stream_id)
                 if status != "running":
-                    logger.info("Stream %s status changed to '%s', stopping" % (stream_id, status))
-                    # Flush remaining tracks
+                    logger.info("Stream %s status changed to '%s', stopping", stream_id, status)
                     sightings_added += _flush_tracks(
                         tracker, embedder, camera_id, conn,
                         stream_id, shop_id, persons_found
@@ -191,8 +237,8 @@ def process_stream(
                     break
 
                 logger.info(
-                    "Stream %s alive: %d frames, %d persons, %d sightings"
-                    % (stream_id, frame_count, len(persons_found), sightings_added)
+                    "Stream %s alive: %d frames, %d persons, %d sightings",
+                    stream_id, frame_count, len(persons_found), sightings_added,
                 )
 
             # Update stats in DB every 60 seconds
@@ -201,11 +247,10 @@ def process_stream(
                 _update_stats(conn, stream_id, len(persons_found), sightings_added)
 
     except KeyboardInterrupt:
-        logger.info("Stream %s interrupted by user" % stream_id)
+        logger.info("Stream %s interrupted by user", stream_id)
     except Exception as e:
-        logger.error("Stream %s error: %s" % (stream_id, e), exc_info=True)
+        logger.error("Stream %s error: %s", stream_id, e, exc_info=True)
     finally:
-        # Flush remaining tracks
         try:
             sightings_added += _flush_tracks(
                 tracker, embedder, camera_id, conn,
@@ -218,8 +263,8 @@ def process_stream(
         source.release()
         conn.close()
         logger.info(
-            "Stream %s disconnected: %d frames, %d persons, %d sightings"
-            % (stream_id, frame_count, len(persons_found), sightings_added)
+            "Stream %s disconnected: %d frames, %d persons, %d sightings",
+            stream_id, frame_count, len(persons_found), sightings_added,
         )
 
 
@@ -242,7 +287,7 @@ def _process_track(track, embedder, camera_id, conn, stream_id, shop_id, persons
             conn.rollback()
         except Exception:
             pass
-        logger.error("Track %d failed: %s" % (track.track_id, e), exc_info=True)
+        logger.error("Track %d failed: %s", track.track_id, e, exc_info=True)
         return False
 
 
@@ -278,8 +323,9 @@ def _update_stats(conn, stream_id, persons_found, sightings_added):
 
 def run():
     logger.info("Stream worker starting...")
-    logger.info("  FPS sample rate: %d" % settings.fps_sample_rate)
-    logger.info("  Status check interval: %ds" % STATUS_CHECK_INTERVAL)
+    logger.info("  FPS sample rate: %d", settings.fps_sample_rate)
+    logger.info("  Status check interval: %ds", STATUS_CHECK_INTERVAL)
+    logger.info("  yt-dlp path: %s", settings.yt_dlp_path or "(not configured)")
 
     detector = Detector()
     embedder = Embedder()

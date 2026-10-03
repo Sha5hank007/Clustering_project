@@ -1,15 +1,36 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import { cropUrl } from '../api/utils';
 import { IdentifyResult } from '../types';
 import AuthenticatedImage from '../components/AuthenticatedImage';
 
+interface Shop { id: number; name: string; }
+interface Camera { camera_id: string; }
+
 export default function IdentifyPage() {
+  const { isAdmin } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<IdentifyResult | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [shopId, setShopId] = useState<number | ''>('');
+  const [cameraId, setCameraId] = useState('');
+
+  useEffect(() => {
+    if (isAdmin) {
+      api.get('/admin/shops').then(r => setShops(r.data)).catch(() => {});
+    }
+    // Fetch distinct camera IDs for dropdown
+    api.get('/streams').then(r => {
+      const ids = Array.from(new Set(r.data.map((s: any) => s.camera_id).filter(Boolean))) as string[];
+      setCameras(ids.map(id => ({ camera_id: id })));
+    }).catch(() => {});
+  }, []);
 
   const handleFile = (f: File | null) => {
     setFile(f); setResult(null); setError('');
@@ -20,7 +41,14 @@ export default function IdentifyPage() {
   const handleSearch = async () => {
     if (!file) return;
     setLoading(true); setError(''); setResult(null);
-    try { const form = new FormData(); form.append('image', file); const res = await api.post('/identify', form); setResult(res.data); }
+    try {
+      const form = new FormData();
+      form.append('image', file);
+      if (isAdmin && shopId) form.append('shop_id', String(shopId));
+      if (cameraId) form.append('camera_id', cameraId);
+      const res = await api.post('/identify', form);
+      setResult(res.data);
+    }
     catch (err: any) { setError(err.response?.data?.detail || 'Identification failed'); }
     finally { setLoading(false); }
   };
@@ -29,6 +57,42 @@ export default function IdentifyPage() {
     <div style={s.container}>
       <h1 style={s.title}>Identify Person</h1>
       <p style={s.desc}>Upload a photo of a person to find all their sightings across your footage.</p>
+
+      {/* Filters */}
+      <div style={s.filterCard}>
+        <h3 style={s.filterTitle}>Search Filters</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 1fr' : '1fr', gap: 14 }}>
+          {isAdmin && shops.length > 0 && (
+            <div>
+              <label style={s.filterLabel}>Shop</label>
+              <select
+                value={shopId}
+                onChange={e => setShopId(e.target.value ? Number(e.target.value) : '')}
+                style={s.select}
+              >
+                <option value="">All Shops</option>
+                {shops.map(sh => (
+                  <option key={sh.id} value={sh.id}>{sh.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label style={s.filterLabel}>Camera</label>
+            <select
+              value={cameraId}
+              onChange={e => setCameraId(e.target.value)}
+              style={s.select}
+            >
+              <option value="">All Cameras</option>
+              {cameras.map(c => (
+                <option key={c.camera_id} value={c.camera_id}>{c.camera_id}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div style={s.uploadRow}>
         <div style={s.dropZone} onClick={() => document.getElementById('id-file')?.click()}>
           {preview ? <img src={preview} alt="" style={s.previewImg} /> : <div style={s.dropText}>Click to upload photo</div>}
@@ -70,20 +134,24 @@ const s: Record<string, React.CSSProperties> = {
   container: { padding: 28, maxWidth: 900, margin: '0 auto' },
   title: { color: '#1e293b', marginBottom: 4, fontWeight: 700 },
   desc: { color: '#94a3b8', fontSize: 14, marginBottom: 20 },
+  filterCard: { background: '#fff', borderRadius: 12, padding: 20, marginBottom: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  filterTitle: { color: '#1e293b', margin: '0 0 14px', fontSize: 16, fontWeight: 600 },
+  filterLabel: { display: 'block', fontSize: 13, fontWeight: 600, color: '#475569', marginBottom: 4 },
+  select: { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: 14, color: '#1e293b' },
   uploadRow: { display: 'flex', gap: 16, alignItems: 'flex-start', marginBottom: 20 },
   dropZone: { width: 200, height: 200, background: '#fff', borderRadius: 12, border: '2px dashed #e2e8f0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-  dropText: { color: '#cbd5e1', fontSize: 13, textAlign: 'center', padding: 20 },
-  previewImg: { width: '100%', height: '100%', objectFit: 'cover' },
+  dropText: { color: '#cbd5e1', fontSize: 13, textAlign: 'center' as const, padding: 20 },
+  previewImg: { width: '100%', height: '100%', objectFit: 'cover' as const },
   searchBtn: { padding: '12px 32px', borderRadius: 8, border: 'none', background: '#2563eb', color: '#fff', fontSize: 15, cursor: 'pointer', fontWeight: 600 },
   error: { background: '#fef2f2', color: '#dc2626', padding: 12, borderRadius: 8, marginBottom: 16, fontSize: 14, border: '1px solid #fecaca' },
   matchCard: { background: '#fff', padding: 20, borderRadius: 12, marginBottom: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
   matchName: { color: '#1e293b', margin: '0 0 12px', fontWeight: 700 },
-  matchStats: { display: 'flex', gap: 20, color: '#64748b', fontSize: 14, flexWrap: 'wrap', alignItems: 'center' },
+  matchStats: { display: 'flex', gap: 20, color: '#64748b', fontSize: 14, flexWrap: 'wrap' as const, alignItems: 'center' },
   simBadge: { background: '#ecfdf5', color: '#059669', padding: '3px 12px', borderRadius: 12, fontWeight: 600, fontSize: 13 },
   sightTitle: { color: '#1e293b', marginBottom: 12, fontWeight: 600 },
   sGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
   sCard: { display: 'flex', background: '#fff', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-  sImg: { width: 80, height: 80, objectFit: 'cover' },
+  sImg: { width: 80, height: 80, objectFit: 'cover' as const },
   sNoImg: { width: 80, height: 80, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#cbd5e1', fontSize: 11 },
   sInfo: { padding: 10 },
 };

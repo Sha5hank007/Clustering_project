@@ -3,10 +3,11 @@ POST /api/identify — upload suspect photo, find matching person within scope.
 """
 import time
 import logging
+from typing import Optional
 import numpy as np
 import cv2
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
-from api.deps import get_db, get_detector, get_embedder, get_current_scope, Scope
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from api.deps import get_db, get_detector, get_embedder, get_current_scope, get_current_user, CurrentUser, Scope
 from api.routers.crops import crop_path_to_url
 from config import settings
 
@@ -17,8 +18,11 @@ router = APIRouter()
 @router.post("/identify")
 def identify(
     image: UploadFile = File(...),
-    job_id: str | None = Query(None),
-    camera_id: str | None = Query(None),
+    shop_id: Optional[int] = Form(None),
+    shop_ids: list[int] = Form([]),
+    job_id: Optional[str] = Form(None),
+    camera_id: Optional[str] = Form(None),
+    user: CurrentUser = Depends(get_current_user),
     scope: Scope = Depends(get_current_scope),
     db=Depends(get_db),
     detector=Depends(get_detector),
@@ -48,13 +52,30 @@ def identify(
     crop = frame[y1:y2, x1:x2]
     embedding = embedder.embed_single(crop, det.landmarks, det.bbox)
 
-    # Search persons within scope
-    cur = db.cursor()
-    shop_clause, shop_params = scope.sql_filter("p.shop_id")
+    # Admin shop filters are constrained to the current tenant.
+    selected_shop_ids = shop_ids or ([shop_id] if shop_id else [])
+    if user.role == "admin" and selected_shop_ids:
+        placeholders = ", ".join(["%s"] * len(selected_shop_ids))
+        person_clause = (
+            "p.shop_id IN (%s) AND p.shop_id IN "
+            "(SELECT id FROM shops WHERE tenant_id = %%s)" % placeholders
+        )
+        person_params = selected_shop_ids + [user.tenant_id]
+        sighting_clause = (
+            "s.shop_id IN (%s) AND s.shop_id IN "
+            "(SELECT id FROM shops WHERE tenant_id = %%s)" % placeholders
+        )
+        sighting_params = selected_shop_ids + [user.tenant_id]
+    else:
+        # Use normal scope (admin=tenant-wide, guard/manager=shop-level)
+        person_clause, person_params = scope.sql_filter("p.shop_id")
+        sighting_clause, sighting_params = scope.sql_filter("s.shop_id")
 
+    # Search persons
+    cur = db.cursor()
     cur.execute(
-        "SELECT p.id, p.centroid, p.label, p.first_seen, p.last_seen, p.sighting_count FROM persons p WHERE %s" % shop_clause,
-        shop_params,
+        "SELECT p.id, p.centroid, p.label, p.first_seen, p.last_seen, p.sighting_count FROM persons p WHERE %s" % person_clause,
+        person_params,
     )
     rows = cur.fetchall()
 
@@ -81,7 +102,6 @@ def identify(
         raise HTTPException(404, "No matching person found (best similarity: %.3f)" % best_sim)
 
     # Fetch sightings with optional filters
-    sighting_clause, sighting_params = scope.sql_filter("s.shop_id")
     where_parts = ["s.person_id = %s", sighting_clause]
     params = [best_id] + sighting_params
 
