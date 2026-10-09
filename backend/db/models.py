@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, func
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, Text, ForeignKey, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 from pgvector.sqlalchemy import Vector
@@ -36,6 +36,7 @@ class Shop(Base):
     sightings = relationship("Sighting", back_populates="shop", cascade="all, delete-orphan")
     ingest_jobs = relationship("IngestJob", back_populates="shop", cascade="all, delete-orphan")
     live_streams = relationship("LiveStream", back_populates="shop", cascade="all, delete-orphan")
+    cameras = relationship("Camera", back_populates="shop", cascade="all, delete-orphan")
 
 
 class User(Base):
@@ -57,6 +58,20 @@ class User(Base):
 
 # ── Data tables ──
 
+class Camera(Base):
+    __tablename__ = "cameras"
+    __table_args__ = (UniqueConstraint("shop_id", "camera_id", name="uq_cameras_shop_camera"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    camera_id = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    shop = relationship("Shop", back_populates="cameras")
+
+
 class Person(Base):
     __tablename__ = "persons"
 
@@ -64,7 +79,7 @@ class Person(Base):
     shop_id = Column(Integer, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     centroid = Column(Vector(512), nullable=False)
     embedding_count = Column(Integer, default=1, nullable=False)
-    sighting_count = Column(Integer, default=1, nullable=False)
+    sighting_count = Column(Integer, default=0, nullable=False)
     first_seen = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     last_seen = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     label = Column(Text, nullable=True)

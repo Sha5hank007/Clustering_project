@@ -9,6 +9,7 @@ import PersonDetailPage from './pages/PersonDetailPage';
 import IdentifyPage from './pages/IdentifyPage';
 import StreamsPage from './pages/StreamsPage';
 import AdminPage from './pages/AdminPage';
+import CamerasPage from './pages/CamerasPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
@@ -17,12 +18,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f1f5f9' }}>
+    <div className="app-shell">
       {token && <Navbar />}
-      <Routes>
+      <main className="app-main"><Routes>
         <Route path="/login" element={token ? <Navigate to="/" replace /> : <LoginPage />} />
         <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
         <Route path="/ingest" element={<ProtectedRoute><IngestPage /></ProtectedRoute>} />
@@ -30,9 +31,10 @@ function AppRoutes() {
         <Route path="/persons/:id" element={<ProtectedRoute><PersonDetailPage /></ProtectedRoute>} />
         <Route path="/identify" element={<ProtectedRoute><IdentifyPage /></ProtectedRoute>} />
         <Route path="/streams" element={<ProtectedRoute><StreamsPage /></ProtectedRoute>} />
+        <Route path="/cameras" element={<ProtectedRoute>{user?.role === 'admin' || user?.role === 'manager' ? <CamerasPage /> : <Navigate to="/" replace />}</ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      </Routes></main>
     </div>
   );
 }

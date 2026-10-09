@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from api.deps import get_db, get_current_user, get_current_scope, CurrentUser, Scope
+from api.camera_registry import validate_active_camera
 from api.routers.crops import crop_path_to_url
 from config import settings
 
@@ -42,6 +43,7 @@ def upload_video(
     db=Depends(get_db),
 ):
     effective_shop_id = _resolve_shop_id(user, shop_id, db)
+    validate_active_camera(db, effective_shop_id, camera_id)
 
     try:
         rec_dt = datetime.fromisoformat(recorded_at)

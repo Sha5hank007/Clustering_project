@@ -98,7 +98,6 @@ def _update_person(cur, person_id, embedding, timestamp):
         UPDATE persons
         SET centroid = %s::vector,
             embedding_count = embedding_count + 1,
-            sighting_count = sighting_count + 1,
             last_seen = to_timestamp(%s)
         WHERE id = %s
         """,
@@ -111,7 +110,7 @@ def _create_person(cur, embedding, timestamp, shop_id):
         """
         INSERT INTO persons (shop_id, centroid, embedding_count, sighting_count,
                              first_seen, last_seen, model_version)
-        VALUES (%s, %s::vector, 1, 1, to_timestamp(%s), to_timestamp(%s), %s)
+        VALUES (%s, %s::vector, 1, 0, to_timestamp(%s), to_timestamp(%s), %s)
         RETURNING id
         """,
         (shop_id, str(embedding.tolist()), timestamp, timestamp, settings.recognizer_model),

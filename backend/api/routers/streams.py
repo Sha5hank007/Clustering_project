@@ -10,27 +10,39 @@ DELETE /api/streams/{id}         — stop + delete record
 import uuid
 import re
 import logging
+from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from api.deps import (
     get_db, get_current_user, get_current_scope,
     require_role, CurrentUser, Scope,
 )
+from api.camera_registry import validate_active_camera
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-YOUTUBE_LIVE_PATTERNS = [
-    r"(https?://)?(www\.)?youtube\.com/live/",
-]
-
-
 def _is_valid_stream_url(url: str) -> bool:
-    if url.startswith(("rtsp://", "webcam://")):
+    if re.fullmatch(r"webcam://\d+", url):
         return True
-    if any(re.match(p, url) for p in YOUTUBE_LIVE_PATTERNS):
-        return True
-    return False
+
+    if url.startswith("rtsp://"):
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+        except ValueError:
+            return False
+        return bool(parsed.hostname) and (port is None or port > 0)
+
+    youtube_url = url if url.startswith(("http://", "https://")) else f"https://{url}"
+    try:
+        parsed = urlsplit(youtube_url)
+    except ValueError:
+        return False
+    return (
+        parsed.hostname in {"youtube.com", "www.youtube.com"}
+        and re.fullmatch(r"/live/[^/?#]+/?", parsed.path) is not None
+    )
 
 
 class CreateStream(BaseModel):
@@ -62,16 +74,22 @@ def add_stream(
     db=Depends(get_db),
 ):
     effective_shop_id = _resolve_shop_id(user, body.shop_id, db)
+    stream_url = body.url.strip()
+    validate_active_camera(db, effective_shop_id, body.camera_id)
 
-    if not _is_valid_stream_url(body.url):
-        raise HTTPException(400, "URL must be rtsp://, webcam://, or a YouTube Live link (youtube.com/live/...)")
+    if not _is_valid_stream_url(stream_url):
+        raise HTTPException(
+            400,
+            "Invalid stream URL. Use rtsp://<camera-host>/<path>, "
+            "webcam://<device-number>, or youtube.com/live/<video-id>.",
+        )
 
     stream_id = "s_" + uuid.uuid4().hex[:10]
     cur = db.cursor()
 
     cur.execute(
         "SELECT id FROM live_streams WHERE url = %s AND shop_id = %s AND status != 'stopped'",
-        (body.url, effective_shop_id),
+        (stream_url, effective_shop_id),
     )
     if cur.fetchone():
         raise HTTPException(409, "This stream URL is already active in this shop")
@@ -81,14 +99,14 @@ def add_stream(
         INSERT INTO live_streams (id, shop_id, created_by, url, camera_id, name, status)
         VALUES (%s, %s, %s, %s, %s, %s, 'running')
         """,
-        (stream_id, effective_shop_id, user.user_id, body.url, body.camera_id, body.name),
+        (stream_id, effective_shop_id, user.user_id, stream_url, body.camera_id, body.name),
     )
     db.commit()
 
     logger.info("Stream created: id=%s shop=%d user=%d", stream_id, effective_shop_id, user.user_id)
     return {
         "stream_id": stream_id, "status": "running",
-        "url": body.url, "camera_id": body.camera_id,
+        "url": stream_url, "camera_id": body.camera_id,
         "name": body.name, "shop_id": effective_shop_id,
     }
 

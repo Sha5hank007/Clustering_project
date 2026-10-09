@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     cooldown_hours: int = 4
 
     # Storage
-    retention_window_days: int = 2
+    retention_window_days: int = 2  # Legacy .env compatibility; crop retention is per sighting.
     crop_storage_dir: str = "./data/crops"
 
     # Ingestion

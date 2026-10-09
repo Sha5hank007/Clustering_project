@@ -41,6 +41,8 @@ cp backend/.env.example backend/.env
 
 The example contains the complete set of supported settings; keep its defaults or edit only the values you need to customize. Ensure `DATABASE_URL` matches your PostgreSQL credentials. The included Compose database defaults are `facetrack` / `changeme` / `facetrack` (user / password / database). Paths in this file are relative to the backend process working directory; run the backend commands from `backend/`.
 
+Every sighting that passes the per-person, per-camera cooldown is saved as a database record with its own face-crop JPEG. Crops are resized to 112×112 and stored under `data/crops/person_<id>/`. The person's sighting count tracks inserted sighting records; the database migration corrects existing counts to match their records.
+
 Google sign-in is optional. To enable it, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `backend/.env` and configure this authorized redirect URI in Google Cloud:
 
 ```text
@@ -179,13 +181,24 @@ Job statuses include `queued`, `processing`, `paused`, `complete`, and `failed`.
 
 | Method | Route | Purpose |
 |---|---|---|
-| `POST` | `/streams` | JSON `{ "name": "Entrance", "url": "rtsp://...", "camera_id": "cam-01", "shop_id": 1 }`. Admins must provide a tenant shop; managers/guards use their assigned shop. URLs must start with `rtsp://` or `webcam://`. |
+| `POST` | `/streams` | JSON `{ "name": "Entrance", "url": "rtsp://...", "camera_id": "cam-01", "shop_id": 1 }`. Admins must provide a tenant shop; managers/guards use their assigned shop. The camera must be active and registered to that shop. Supported URLs are RTSP (`rtsp://host/path`), a local worker webcam (`webcam://0`), and YouTube Live (`youtube.com/live/<video-id>`). The API validates the URL format; the worker checks whether the source can actually be opened. YouTube Live requires `YT_DLP_PATH` to be configured on the server. |
 | `GET` | `/streams` | List streams in the caller's scope. |
 | `GET` | `/streams/{stream_id}` | Stream details. |
 | `PATCH` | `/streams/{stream_id}/pause` | Pause a running stream. |
 | `PATCH` | `/streams/{stream_id}/resume` | Resume a paused stream. |
 | `PATCH` | `/streams/{stream_id}/stop` | Stop a stream; admin/manager only. |
 | `DELETE` | `/streams/{stream_id}` | Stop and remove the stream record; admin/manager only. |
+
+### Cameras
+
+Camera IDs are registered per shop and must be selected for both live streams and video uploads. Admins select a shop in their tenant; managers manage cameras for their assigned shop; guards can use active cameras in their assigned shop but cannot manage the registry. Camera IDs are unique within a shop. Deactivated cameras remain linked to historical records.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/cameras?shop_id=1` | List active cameras in the caller's shop. Tenant admins must supply a shop ID. |
+| `GET` | `/cameras?shop_id=1&include_inactive=true` | List active and inactive cameras; admin/manager only see inactive entries. |
+| `POST` | `/cameras` | Register `{ "camera_id": "cam-01", "name": "Front Door", "shop_id": 1 }`; admin/manager only. Managers are scoped to their assigned shop. |
+| `PATCH` | `/cameras/{camera_id}?shop_id=1` | Update the display name or `is_active`; admin/manager only. Camera IDs are immutable to preserve historical associations. |
 
 ### Administration and Stats
 

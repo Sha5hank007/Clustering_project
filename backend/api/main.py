@@ -5,7 +5,7 @@ Run: uvicorn api.main:app --reload --port 8000
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import auth, identify, persons, crops, stats, ingest, admin, streams
+from api.routers import auth, identify, persons, crops, stats, ingest, admin, streams, cameras
 from api.deps import get_detector, get_embedder
 
 logging.basicConfig(
@@ -31,6 +31,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api", tags=["Auth"])
 app.include_router(ingest.router, prefix="/api", tags=["Ingestion"])
 app.include_router(streams.router, prefix="/api", tags=["Live Streams"])
+app.include_router(cameras.router, prefix="/api", tags=["Cameras"])
 app.include_router(identify.router, prefix="/api", tags=["Identification"])
 app.include_router(persons.router, prefix="/api", tags=["Persons"])
 app.include_router(crops.router, prefix="/api", tags=["Crops"])

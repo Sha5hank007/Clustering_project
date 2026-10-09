@@ -1,0 +1,118 @@
+/* ------------------------------------------------------------------
+   Global base styles
+   Page-specific styles now live inside each page component.
+   ------------------------------------------------------------------ */
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #1d1d1f;
+  background: #fff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --ink: #1d1d1f;
+  --muted: #6e6e73;
+  --faint: #86868b;
+  --soft: #f5f5f7;
+  --line: rgba(0, 0, 0, 0.08);
+  --accent: #0071e3;
+  --nav-height: 52px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  scroll-behavior: smooth;
+  /* keep anchored / scrolled-to content clear of the sticky navbar */
+  scroll-padding-top: calc(var(--nav-height) + 16px);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: #fff;
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.47;
+  letter-spacing: -0.01em;
+}
+
+h1, h2, h3, h4, p {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Fallback focus ring for anything that doesn't define its own */
+:focus-visible {
+  outline: 3px solid rgba(0, 113, 227, 0.35);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(0, 113, 227, 0.18);
+}
+
+/* ------------------------------------------------------------------
+   App layout
+   ------------------------------------------------------------------ */
+
+.app-shell {
+  min-height: 100vh;
+  background: #fff;
+}
+
+.app-main {
+  min-height: calc(100vh - var(--nav-height));
+  min-height: calc(100dvh - var(--nav-height));
+}
+
+/* Generic full-page loading / error message (used by route guards etc.) */
+.page-loading {
+  display: grid;
+  min-height: 60vh;
+  place-items: center;
+  color: var(--muted);
+  font-size: 17px;
+}
+
+/* ------------------------------------------------------------------
+   Accessibility
+   ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
