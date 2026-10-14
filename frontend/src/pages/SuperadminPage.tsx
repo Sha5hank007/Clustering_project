@@ -31,9 +31,14 @@ export default function SuperadminPage() {
   const [activity, setActivity] = useState<AuditEvent[]>([]);
   const [name, setName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+  const [inviteAdminId, setInviteAdminId] = useState<number | null>(null);
+  const [inviteAdminEmail, setInviteAdminEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const duplicateOrganization = organizations.some(
+    organization => organization.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
+  );
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -65,6 +70,10 @@ export default function SuperadminPage() {
 
   const createOrganization = async (event: FormEvent) => {
     event.preventDefault();
+    if (duplicateOrganization) {
+      setError('An organization with this name already exists. Invite an admin from its row instead.');
+      return;
+    }
     setSaving(true);
     setError('');
     setNotice('');
@@ -82,6 +91,27 @@ export default function SuperadminPage() {
       setError(responseError(err, 'Unable to create the organization.'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const inviteAdmin = async (event: FormEvent, organization: Organization) => {
+    event.preventDefault();
+    setBusyId(organization.id);
+    setError('');
+    setNotice('');
+    try {
+      await api.post(`/superadmin/organizations/${organization.id}/admins/invite`, {
+        email: inviteAdminEmail.trim(),
+      });
+      setInviteAdminEmail('');
+      setInviteAdminId(null);
+      setNotice(`An administrator invitation was sent to ${inviteAdminEmail.trim()}.`);
+      await loadOrganizations();
+      await loadActivity();
+    } catch (err: any) {
+      setError(responseError(err, 'Unable to invite this administrator.'));
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -140,17 +170,23 @@ export default function SuperadminPage() {
         <form onSubmit={createOrganization} className="sa-form">
           <label>
             <span>Organization name</span>
-            <input value={name} onChange={event => setName(event.target.value)} required maxLength={255} />
+            <input value={name} onChange={event => setName(event.target.value)} required maxLength={255}
+              aria-invalid={duplicateOrganization} />
           </label>
           <label>
             <span>First admin email</span>
             <input type="email" value={adminEmail} onChange={event => setAdminEmail(event.target.value)}
               required maxLength={255} autoComplete="email" />
           </label>
-          <button type="submit" disabled={saving}>
+          <button type="submit" disabled={saving || duplicateOrganization}>
             {saving ? 'Creating…' : 'Create and invite'}
           </button>
         </form>
+        {duplicateOrganization && (
+          <p className="sa-inline-error" role="status">
+            This organization already exists. Use its Invite admin action below instead of creating a duplicate.
+          </p>
+        )}
         <p className="sa-note">You won’t set or see the admin’s password. Access is limited to this organization.</p>
       </section>
 
@@ -195,11 +231,34 @@ export default function SuperadminPage() {
                         {working ? 'Sending…' : 'Resend invite'}
                       </button>
                     )}
+                    {organization.is_active && (
+                      <button type="button" className="sa-text-button"
+                        onClick={() => {
+                          setInviteAdminId(inviteAdminId === organization.id ? null : organization.id);
+                          setInviteAdminEmail('');
+                          setError('');
+                        }}>
+                        {inviteAdminId === organization.id ? 'Cancel invite' : 'Invite admin'}
+                      </button>
+                    )}
                     <button type="button" className="sa-text-button" disabled={working}
                       onClick={() => void setActive(organization)}>
                       {organization.is_active ? 'Suspend' : 'Reactivate'}
                     </button>
                   </div>
+                  {inviteAdminId === organization.id && (
+                    <form className="sa-invite-form" onSubmit={event => void inviteAdmin(event, organization)}>
+                      <label>
+                        <span>Administrator email</span>
+                        <input type="email" value={inviteAdminEmail}
+                          onChange={event => setInviteAdminEmail(event.target.value)}
+                          autoComplete="email" required maxLength={255} />
+                      </label>
+                      <button type="submit" disabled={working}>
+                        {working ? 'Sending…' : 'Send invitation'}
+                      </button>
+                    </form>
+                  )}
                 </li>
               );
             })}
@@ -243,6 +302,8 @@ function eventLabel(event: AuditEvent) {
       return event.details.is_active ? 'Reactivated organization' : 'Suspended organization';
     case 'admin_invite.resent':
       return `Resent first-admin invitation to ${String(event.details.admin_email || 'admin')}`;
+    case 'admin_invite.created':
+      return `Invited organization admin ${String(event.details.admin_email || '')}`;
     case 'admin_invite.accepted':
       return `First-admin invitation accepted by ${String(event.details.email || 'admin')}`;
     case 'superadmin.bootstrapped':
@@ -283,6 +344,7 @@ const styles = `
 .sa-note { margin: 12px 0 0; color: var(--sa-faint); font-size: 13px; }
 .sa-message { margin: 16px 0 0; color: #147a3f; font-size: 14px; }
 .sa-message--error { color: #c62828; }
+.sa-inline-error { margin: 10px 0 0; color: #c62828; font-size: 13px; }
 .sa-list-section { padding-top: 34px; }
 .sa-activity { padding-top: 34px; }
 .sa-list-heading { display: flex; align-items: center; justify-content: space-between; }
@@ -300,6 +362,11 @@ const styles = `
 .sa-status--off { color: #c62828; }
 .sa-text-button { padding: 6px 0; border: 0; background: none; color: var(--sa-blue); font: inherit; font-size: 13px; cursor: pointer; }
 .sa-text-button:hover { text-decoration: underline; }
+.sa-invite-form { display: flex; grid-column: 1 / -1; align-items: end; gap: 10px; margin-left: auto; }
+.sa-invite-form label { display: grid; gap: 5px; color: var(--sa-muted); font-size: 12px; }
+.sa-invite-form input { min-height: 34px; padding: 0 9px; border: 1px solid var(--sa-line); border-radius: 7px; font: inherit; }
+.sa-invite-form button { min-height: 34px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--sa-blue); color: white; font: inherit; font-size: 12px; cursor: pointer; }
+.sa-invite-form button:disabled { opacity: .55; cursor: wait; }
 .sa-activity-list { list-style: none; margin: 12px 0 0; padding: 0; }
 .sa-activity-list li { display: flex; justify-content: space-between; gap: 20px; padding: 13px 0; border-bottom: 1px solid var(--sa-line); }
 .sa-event { display: grid; gap: 4px; font-size: 13px; }
@@ -312,6 +379,9 @@ const styles = `
   .sa-form button { justify-self: start; }
   .sa-row { align-items: flex-start; flex-direction: column; gap: 12px; }
   .sa-actions { flex-wrap: wrap; }
+  .sa-invite-form { align-items: stretch; flex-direction: column; width: 100%; margin: 0; }
+  .sa-invite-form input { box-sizing: border-box; width: 100%; }
+  .sa-invite-form button { align-self: flex-start; }
   .sa-activity-list li { flex-direction: column; gap: 6px; }
 }
 `;

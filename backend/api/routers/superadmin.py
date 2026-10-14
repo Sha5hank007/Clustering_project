@@ -42,6 +42,10 @@ class OrganizationStatus(BaseModel):
     is_active: bool
 
 
+class InviteAdmin(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
 @router.get("/organizations")
 def list_organizations(
     user: CurrentUser = Depends(require_role("superadmin")),
@@ -58,7 +62,7 @@ def list_organizations(
         LEFT JOIN LATERAL (
             SELECT i.email, i.accepted_at, i.expires_at, i.revoked_at
             FROM organization_admin_invites i
-            WHERE i.tenant_id = t.id
+            WHERE i.tenant_id = t.id AND i.is_first_admin = TRUE
             ORDER BY i.created_at DESC, i.id DESC
             LIMIT 1
         ) latest ON TRUE
@@ -138,9 +142,11 @@ def create_organization(
         raise HTTPException(400, "Organization name is required")
     if not EMAIL_PATTERN.fullmatch(email):
         raise HTTPException(400, "Enter a valid admin email address")
-    require_mail_configuration()
 
     cur = db.cursor()
+    cur.execute("SELECT id FROM tenants WHERE LOWER(BTRIM(name)) = LOWER(BTRIM(%s))", (name,))
+    if cur.fetchone():
+        raise HTTPException(409, "An organization with this name already exists. Invite an admin from that organization instead.")
     cur.execute("SELECT id FROM users WHERE LOWER(email) = %s", (email,))
     if cur.fetchone():
         raise HTTPException(409, "An account already exists for this email address")
@@ -156,6 +162,7 @@ def create_organization(
     )
     if cur.fetchone():
         raise HTTPException(409, "An active organization invitation already exists for this email")
+    require_mail_configuration()
 
     token = new_invite_token()
     try:
@@ -176,8 +183,8 @@ def create_organization(
             cur.execute(
                 """
                 INSERT INTO organization_admin_invites
-                    (tenant_id, email, token_hash, expires_at, created_by)
-                VALUES (%s, %s, %s, %s, %s)
+                    (tenant_id, email, token_hash, expires_at, created_by, is_first_admin)
+                VALUES (%s, %s, %s, %s, %s, TRUE)
                 """,
                 (
                     tenant_id,
@@ -195,6 +202,12 @@ def create_organization(
                 {"organization_name": name, "admin_email": email},
             )
     except UniqueViolation as exc:
+        constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
+        if constraint == "uq_tenants_normalized_name":
+            raise HTTPException(
+                409,
+                "An organization with this name already exists. Invite an admin from that organization instead.",
+            ) from exc
         raise HTTPException(409, "An active organization invitation already exists for this email") from exc
 
     send_admin_invite(email, name, token)
@@ -229,7 +242,7 @@ def resend_admin_invite(
     cur.execute(
         """
         SELECT email FROM organization_admin_invites
-        WHERE tenant_id = %s
+        WHERE tenant_id = %s AND is_first_admin = TRUE
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
@@ -263,15 +276,16 @@ def resend_admin_invite(
                 """
                 UPDATE organization_admin_invites
                 SET revoked_at = now()
-                WHERE tenant_id = %s AND accepted_at IS NULL AND revoked_at IS NULL
+                WHERE tenant_id = %s AND is_first_admin = TRUE
+                  AND accepted_at IS NULL AND revoked_at IS NULL
                 """,
                 (tenant_id,),
             )
             cur.execute(
                 """
                 INSERT INTO organization_admin_invites
-                    (tenant_id, email, token_hash, expires_at, created_by)
-                VALUES (%s, %s, %s, %s, %s)
+                    (tenant_id, email, token_hash, expires_at, created_by, is_first_admin)
+                VALUES (%s, %s, %s, %s, %s, TRUE)
                 """,
                 (
                     tenant_id,
@@ -293,6 +307,81 @@ def resend_admin_invite(
 
     send_admin_invite(email, tenant[0], token)
     logger.info("Organization admin invite resent: tenant=%d by superadmin=%d", tenant_id, user.user_id)
+    return {"tenant_id": tenant_id, "admin_email": email, "admin_invite_status": "pending"}
+
+
+@router.post("/organizations/{tenant_id}/admins/invite", status_code=201)
+def invite_organization_admin(
+    tenant_id: int,
+    body: InviteAdmin,
+    user: CurrentUser = Depends(require_role("superadmin")),
+    db=Depends(get_db),
+):
+    email = body.email.strip().lower()
+    if not EMAIL_PATTERN.fullmatch(email):
+        raise HTTPException(400, "Enter a valid admin email address")
+    require_mail_configuration()
+
+    cur = db.cursor()
+    cur.execute("SELECT name, is_active FROM tenants WHERE id = %s", (tenant_id,))
+    tenant = cur.fetchone()
+    if not tenant:
+        raise HTTPException(404, "Organization not found")
+    if not tenant[1]:
+        raise HTTPException(409, "Reactivate the organization before inviting an admin")
+
+    cur.execute("SELECT id FROM users WHERE LOWER(email) = %s", (email,))
+    if cur.fetchone():
+        raise HTTPException(409, "An account already exists for this email address")
+    cur.execute(
+        """
+        SELECT id FROM organization_admin_invites
+        WHERE LOWER(email) = %s AND accepted_at IS NULL
+          AND revoked_at IS NULL AND expires_at > now()
+        """,
+        (email,),
+    )
+    if cur.fetchone():
+        raise HTTPException(409, "This email already has an active organization invitation")
+
+    token = new_invite_token()
+    try:
+        with db:
+            cur.execute(
+                """
+                UPDATE organization_admin_invites
+                SET revoked_at = now()
+                WHERE LOWER(email) = %s AND accepted_at IS NULL
+                  AND revoked_at IS NULL AND expires_at <= now()
+                """,
+                (email,),
+            )
+            cur.execute(
+                """
+                INSERT INTO organization_admin_invites
+                    (tenant_id, email, token_hash, expires_at, created_by, is_first_admin)
+                VALUES (%s, %s, %s, %s, %s, FALSE)
+                """,
+                (
+                    tenant_id,
+                    email,
+                    hash_invite_token(token),
+                    datetime.now(timezone.utc) + timedelta(hours=settings.organization_invite_expiry_hours),
+                    user.user_id,
+                ),
+            )
+            _record_audit(
+                cur,
+                tenant_id,
+                user.user_id,
+                "admin_invite.created",
+                {"admin_email": email},
+            )
+    except UniqueViolation as exc:
+        raise HTTPException(409, "This email already has an active organization invitation") from exc
+
+    send_admin_invite(email, tenant[0], token)
+    logger.info("Organization admin invited: tenant=%d email=%s by superadmin=%d", tenant_id, email, user.user_id)
     return {"tenant_id": tenant_id, "admin_email": email, "admin_invite_status": "pending"}
 
 

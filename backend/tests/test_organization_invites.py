@@ -6,6 +6,8 @@ from fastapi import HTTPException
 from api.deps import CurrentUser, get_current_scope
 from api.organization_invites import hash_invite_token, new_invite_token
 from api.routers.auth import AcceptOrganizationInvite, accept_organization_invite
+from api.routers import superadmin
+from api.routers.superadmin import CreateOrganization, create_organization
 
 
 def test_invite_token_is_random_and_only_hash_is_stored():
@@ -50,6 +52,14 @@ class FakeDB:
     def commit(self):
         self.commits += 1
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is None:
+            self.commit()
+        return False
+
 
 def test_accept_invite_creates_tenant_admin_and_consumes_token():
     token = new_invite_token()
@@ -74,3 +84,44 @@ def test_accept_invite_creates_tenant_admin_and_consumes_token():
 def test_invite_password_must_be_at_least_eight_characters():
     with pytest.raises(ValueError):
         AcceptOrganizationInvite(token=new_invite_token(), password="short1!")
+
+
+def test_duplicate_organization_name_is_rejected_before_invite_creation():
+    db = FakeDB([(3,)])
+
+    with pytest.raises(HTTPException) as error:
+        create_organization(
+            CreateOrganization(name="  Example Org  ", admin_email="new-admin@example.com"),
+            user=CurrentUser(user_id=1, tenant_id=None, shop_id=None, role="superadmin"),
+            db=db,
+        )
+
+    assert error.value.status_code == 409
+    assert "already exists" in error.value.detail
+    assert "LOWER(BTRIM(name))" in db.fake_cursor.executed[0][0]
+    assert db.commits == 0
+
+
+def test_resending_first_admin_invite_does_not_revoke_other_admin_invites(monkeypatch):
+    db = FakeDB([
+        ("Example Org", True),
+        ("first-admin@example.com",),
+        None,
+        None,
+    ])
+    monkeypatch.setattr(superadmin, "require_mail_configuration", lambda: None)
+    monkeypatch.setattr(superadmin, "send_admin_invite", lambda *args: None)
+    monkeypatch.setattr(superadmin, "_record_audit", lambda *args: None)
+
+    result = superadmin.resend_admin_invite(
+        tenant_id=4,
+        user=CurrentUser(user_id=1, tenant_id=None, shop_id=None, role="superadmin"),
+        db=db,
+    )
+
+    revoke_query = next(
+        query for query, _ in db.fake_cursor.executed
+        if query.lstrip().startswith("UPDATE organization_admin_invites")
+    )
+    assert result["admin_email"] == "first-admin@example.com"
+    assert "is_first_admin = TRUE" in revoke_query

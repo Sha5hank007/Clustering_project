@@ -148,7 +148,9 @@ alembic upgrade head
 python scripts/create_superadmin.py
 ```
 
-The script prompts for an email and a hidden password (minimum 8 characters), and refuses to create the first superadmin if one already exists. To provision an additional trusted superadmin, use `python scripts/create_superadmin.py --additional`. Superadmins are platform operators: they create, suspend, and reactivate organizations, resend first-admin invitations, and review an audit trail, but cannot access organization operational data.
+Migration 009 enforces organization-name uniqueness without regard to capitalization or surrounding whitespace. It stops with the conflicting names/IDs if duplicate names already exist, so resolve those records before rerunning the migration; it will not merge organizations or move their data automatically.
+
+The script prompts for an email and a hidden password (minimum 8 characters), and refuses to create the first superadmin if one already exists. To provision an additional trusted superadmin, use `python scripts/create_superadmin.py --additional`. Superadmins are platform operators: they create, suspend, and reactivate organizations, invite additional admins to existing organizations, resend first-admin invitations, and review an audit trail, but cannot access organization operational data. Organization names are unique case-insensitively and after trimming surrounding spaces. If a name already exists, use that organization's **Invite admin** action instead of creating another organization.
 
 Configure SMTP in `backend/.env` before creating organizations. In the superadmin UI, create an organization and provide its first admin's email. FaceTrack emails a single-use setup link that expires after `ORGANIZATION_INVITE_EXPIRY_HOURS`; the invited admin chooses their own password. The organization admin then creates shops and manages users inside their organization. Managers and guards remain assigned to a shop.
 
@@ -242,6 +244,7 @@ These routes require the tenantless `superadmin` role. Superadmins can manage or
 | `GET` | `/superadmin/organizations` | List organizations and first-admin invitation status. |
 | `POST` | `/superadmin/organizations` | Create an organization and email a first-admin setup invitation. |
 | `POST` | `/superadmin/organizations/{tenant_id}/resend-invite` | Revoke the previous pending link and send a new one. |
+| `POST` | `/superadmin/organizations/{tenant_id}/admins/invite` | Invite another admin to the existing organization. |
 | `PATCH` | `/superadmin/organizations/{tenant_id}/status` | Suspend or reactivate an organization. |
 | `GET` | `/superadmin/audit?limit=50` | List recent platform provisioning and status-change events. |
 

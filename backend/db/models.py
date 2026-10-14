@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, Text, ForeignKey, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 from pgvector.sqlalchemy import Vector
@@ -15,6 +15,9 @@ class Tenant(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    __table_args__ = (
+        Index("uq_tenants_normalized_name", func.lower(func.btrim(name)), unique=True),
+    )
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -63,6 +66,7 @@ class OrganizationAdminInvite(Base):
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     email = Column(String(255), nullable=False)
+    is_first_admin = Column(Boolean, nullable=False, default=False, server_default="false")
     token_hash = Column(String(64), unique=True, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
