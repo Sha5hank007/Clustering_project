@@ -8,6 +8,7 @@ interface AuthState {
   logout: () => void;
   isAdmin: boolean;
   isManager: boolean;
+  isSuperadmin: boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -38,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token, user, login, logout,
       isAdmin: user?.role === 'admin',
       isManager: user?.role === 'manager',
+      isSuperadmin: user?.role === 'superadmin',
     }}>
       {children}
     </AuthContext.Provider>

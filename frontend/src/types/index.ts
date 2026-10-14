@@ -3,7 +3,7 @@ export interface LoginResponse {
   user_id: number;
   email: string;
   role: string;
-  tenant_id: number;
+  tenant_id: number | null;
   shop_id: number | null;
 }
 

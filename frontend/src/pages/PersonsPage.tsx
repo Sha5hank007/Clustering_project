@@ -28,7 +28,7 @@ const PersonIcon = ({ size = 28 }: { size?: number }) => (
   </svg>
 );
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 15;
 
 export default function PersonsPage() {
   const [searchParams] = useSearchParams();
@@ -215,8 +215,8 @@ const styles = `
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-  gap: 36px 22px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 26px 16px;
   transition: opacity 0.3s var(--pp-ease);
 }
 .pp-grid.is-loading { opacity: 0.45; pointer-events: none; }
@@ -230,8 +230,8 @@ const styles = `
 
 .pp-media {
   position: relative;
-  aspect-ratio: 4 / 5;
-  border-radius: 18px;
+  aspect-ratio: 1 / 1.12;
+  border-radius: 16px;
   overflow: hidden;
   background: var(--pp-soft);
   transition: box-shadow 0.4s var(--pp-ease), transform 0.4s var(--pp-ease);
@@ -251,9 +251,9 @@ const styles = `
   color: #c7c7cc;
 }
 
-.pp-info { display: flex; flex-direction: column; gap: 3px; padding: 14px 4px 0; min-width: 0; }
+.pp-info { display: flex; flex-direction: column; gap: 3px; padding: 10px 4px 0; min-width: 0; }
 .pp-name {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
   overflow: hidden;
@@ -263,7 +263,7 @@ const styles = `
 }
 .pp-name.is-unnamed { color: var(--pp-muted); font-weight: 500; }
 .pp-card:hover .pp-name { color: var(--pp-accent); }
-.pp-meta { font-size: 14px; color: var(--pp-faint); font-variant-numeric: tabular-nums; }
+.pp-meta { font-size: 13px; color: var(--pp-faint); font-variant-numeric: tabular-nums; }
 .pp-sep { margin: 0 6px; color: #c7c7cc; }
 
 /* Skeletons */

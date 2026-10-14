@@ -16,7 +16,7 @@ const BrandMark = () => (
 );
 
 export default function Navbar() {
-  const { user, logout, isAdmin, isManager } = useAuth();
+  const { user, logout, isAdmin, isManager, isSuperadmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -31,6 +31,8 @@ export default function Navbar() {
 
   const canManage = isAdmin || isManager;
   const links = [
+    ...(isSuperadmin ? [{ to: '/superadmin', label: 'Organizations' }] : []),
+    ...(!isSuperadmin ? [
     { to: '/', label: 'Dashboard' },
     { to: '/ingest', label: 'Upload' },
     { to: '/streams', label: 'Streams' },
@@ -38,6 +40,7 @@ export default function Navbar() {
     { to: '/persons', label: 'People' },
     { to: '/identify', label: 'Identify' },
     ...(canManage ? [{ to: '/admin', label: 'Admin' }] : []),
+    ] : []),
   ];
 
   const isActive = (to: string) =>

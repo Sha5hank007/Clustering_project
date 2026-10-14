@@ -14,6 +14,8 @@ export default function PersonDetailPage() {
   const [label, setLabel] = useState('');
   const [page, setPage] = useState(1);
 
+  const formatCount = (count: number, singular: string, plural: string) => `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+
   const load = () => {
     const params: any = { page, limit: 20 };
     if (jobId) params.job_id = jobId;
@@ -30,8 +32,7 @@ export default function PersonDetailPage() {
       <div style={s.header}>
         <h1 style={s.title}>{person.label || `Person #${person.id}`}</h1>
         <div style={s.badges}>
-          <span style={s.badge}>{person.sighting_count} sightings</span>
-          <span style={s.badge}>{person.embedding_count} embeddings</span>
+          <span style={s.badge}>{formatCount(person.sighting_count, 'sighting', 'sightings')}</span>
         </div>
         <div style={s.dates}>First: {person.first_seen ? new Date(person.first_seen).toLocaleString() : 'N/A'} • Last: {person.last_seen ? new Date(person.last_seen).toLocaleString() : 'N/A'}</div>
       </div>

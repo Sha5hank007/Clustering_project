@@ -63,11 +63,11 @@ export default function LoginPage() {
         user_id: Number(searchParams.get('user_id')),
         email: searchParams.get('email') || '',
         role: searchParams.get('role') || '',
-        tenant_id: Number(searchParams.get('tenant_id')),
+        tenant_id: searchParams.get('tenant_id') ? Number(searchParams.get('tenant_id')) : null,
         shop_id: searchParams.get('shop_id') ? Number(searchParams.get('shop_id')) : null,
       });
       // replace: keeps the token out of the browser's back-button history
-      navigate('/', { replace: true });
+      navigate(searchParams.get('role') === 'superadmin' ? '/superadmin' : '/', { replace: true });
     }
   }, [searchParams]);
 
@@ -82,7 +82,7 @@ export default function LoginPage() {
     try {
       const res = await api.post('/auth/login', { email: email.trim(), password });
       login(res.data);
-      navigate('/', { replace: true });
+      navigate(res.data.role === 'superadmin' ? '/superadmin' : '/', { replace: true });
     } catch (err: any) {
       fail(err.response?.data?.detail || 'Sign in failed. Please try again.');
     } finally {
@@ -114,6 +114,9 @@ export default function LoginPage() {
 
           <h1 className="lg-title lg-step" style={{ animationDelay: '60ms' }}>Sign in to FaceTrack</h1>
           <p className="lg-subtitle lg-step" style={{ animationDelay: '110ms' }}>Welcome back. Enter your details to continue.</p>
+          {searchParams.get('invite') === 'accepted' && (
+            <p className="lg-success" role="status">Your admin account is ready. Sign in to continue.</p>
+          )}
 
           {GOOGLE_CLIENT_ID && (
             <div className="lg-step" style={{ animationDelay: '160ms' }}>
@@ -288,6 +291,7 @@ const styles = `
   line-height: 1.15;
 }
 .lg-subtitle { margin: 10px 0 32px; font-size: 17px; color: var(--lg-muted); line-height: 1.4; }
+.lg-success { margin: -20px 0 24px; color: #147a3f; font-size: 14px; }
 
 /* Google */
 .lg-google {

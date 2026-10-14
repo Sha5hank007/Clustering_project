@@ -15,6 +15,7 @@ class Tenant(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     shops = relationship("Shop", back_populates="tenant", cascade="all, delete-orphan")
@@ -25,7 +26,7 @@ class Shop(Base):
     __tablename__ = "shops"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(255), nullable=False)
     address = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -54,6 +55,20 @@ class User(Base):
     shop = relationship("Shop", back_populates="users")
     uploaded_jobs = relationship("IngestJob", back_populates="uploaded_by_user")
     created_streams = relationship("LiveStream", back_populates="created_by_user")
+
+
+class OrganizationAdminInvite(Base):
+    __tablename__ = "organization_admin_invites"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    email = Column(String(255), nullable=False)
+    token_hash = Column(String(64), unique=True, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 # ── Data tables ──

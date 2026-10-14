@@ -56,9 +56,9 @@ security = HTTPBearer(auto_error=False)
 class CurrentUser:
     """Extracted from JWT token. Available in every protected endpoint."""
     user_id: int
-    tenant_id: int
+    tenant_id: int | None
     shop_id: int | None   # None for tenant admins
-    role: str             # admin, manager, guard
+    role: str             # superadmin, admin, manager, guard
 
 
 @dataclass
@@ -114,11 +114,38 @@ def get_user_from_token(token: str) -> CurrentUser:
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db=Depends(get_db),
 ) -> CurrentUser:
-    """Extract and validate the JWT from the Authorization header."""
+    """Validate the JWT against the current account and organization state."""
     if credentials is None:
         raise HTTPException(401, "Not authenticated")
-    return get_user_from_token(credentials.credentials)
+    token_user = get_user_from_token(credentials.credentials)
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT u.tenant_id, u.shop_id, u.role, t.is_active
+        FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
+        WHERE u.id = %s
+        """,
+        (token_user.user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(401, "Account no longer exists")
+    tenant_id, shop_id, role, tenant_active = row
+    if (tenant_id, shop_id, role) != (token_user.tenant_id, token_user.shop_id, token_user.role):
+        raise HTTPException(401, "Account permissions changed; sign in again")
+    if role == "superadmin":
+        if tenant_id is not None or shop_id is not None:
+            raise HTTPException(403, "Invalid superadmin account configuration")
+    elif tenant_id is None or not tenant_active:
+        raise HTTPException(403, "Organization is inactive")
+    return CurrentUser(
+        user_id=token_user.user_id,
+        tenant_id=tenant_id,
+        shop_id=shop_id,
+        role=role,
+    )
 
 
 def get_current_scope(
@@ -128,6 +155,8 @@ def get_current_scope(
     Convert current user to a data scope.
     Admin → see all shops. Manager/guard → see their shop only.
     """
+    if user.role == "superadmin" or user.tenant_id is None:
+        raise HTTPException(403, "Superadmins cannot access organization data")
     return Scope(
         tenant_id=user.tenant_id,
         shop_id=user.shop_id,

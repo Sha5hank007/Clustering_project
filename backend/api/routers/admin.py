@@ -1,7 +1,6 @@
 """
 Admin endpoints for managing tenants, shops, users, and job control.
 
-POST   /api/admin/tenants           — create tenant (admin only)
 POST   /api/admin/shops             — create shop (admin only)
 GET    /api/admin/shops             — list shops (admin only)
 POST   /api/admin/users             — create user (admin or manager)
@@ -19,10 +18,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin")
 
 
-class CreateTenant(BaseModel):
-    name: str
-
-
 class CreateShop(BaseModel):
     name: str
     address: str | None = None
@@ -37,22 +32,6 @@ class CreateUser(BaseModel):
 
 class JobControl(BaseModel):
     action: str
-
-
-# ── Tenants ──
-
-@router.post("/tenants")
-def create_tenant(
-    body: CreateTenant,
-    user: CurrentUser = Depends(require_role("admin")),
-    db=Depends(get_db),
-):
-    cur = db.cursor()
-    cur.execute("INSERT INTO tenants (name) VALUES (%s) RETURNING id", (body.name,))
-    tenant_id = cur.fetchone()[0]
-    db.commit()
-    logger.info("Tenant created: id=%d name=%s (by user %d)" % (tenant_id, body.name, user.user_id))
-    return {"id": tenant_id, "name": body.name}
 
 
 # ── Shops ──
@@ -133,7 +112,8 @@ def create_user(
         if not cur.fetchone():
             raise HTTPException(404, "Shop not found in your organization")
 
-    cur.execute("SELECT id FROM users WHERE email = %s", (body.email,))
+    email = body.email.strip().lower()
+    cur.execute("SELECT id FROM users WHERE LOWER(email) = %s", (email,))
     if cur.fetchone():
         raise HTTPException(409, "Email already registered")
 
@@ -143,12 +123,12 @@ def create_user(
         INSERT INTO users (tenant_id, shop_id, email, password_hash, role)
         VALUES (%s, %s, %s, %s, %s) RETURNING id
         """,
-        (user.tenant_id, body.shop_id, body.email, password_hash, body.role),
+        (user.tenant_id, body.shop_id, email, password_hash, body.role),
     )
     new_id = cur.fetchone()[0]
     db.commit()
-    logger.info("User created: id=%d email=%s role=%s (by user %d)" % (new_id, body.email, body.role, user.user_id))
-    return {"id": new_id, "email": body.email, "role": body.role, "shop_id": body.shop_id}
+    logger.info("User created: id=%d email=%s role=%s (by user %d)" % (new_id, email, body.role, user.user_id))
+    return {"id": new_id, "email": email, "role": body.role, "shop_id": body.shop_id}
 
 
 @router.get("/users")

@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret: str = "change-this-to-a-random-string"
     jwt_expiry_hours: int = 24
+    organization_invite_expiry_hours: int = 48
+
+    # Organization invitation email
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
 
     # Google OAuth
     google_client_id: str = ""
