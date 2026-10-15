@@ -4,8 +4,16 @@ import { Shop, User } from '../types';
 import { useAuth } from '../context/AuthContext';
 import Reveal from '../components/Reveal';
 
-type Tab = 'users' | 'shops';
+type Tab = 'users' | 'invitations' | 'shops';
 type ShopRow = Shop & { address?: string | null };
+type Invitation = {
+  id: number;
+  email: string;
+  role: string;
+  shop_name: string | null;
+  expires_at: string;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+};
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -44,6 +52,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('users');
   const [shops, setShops] = useState<ShopRow[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
 
   const [shopName, setShopName] = useState('');
   const [shopAddr, setShopAddr] = useState('');
@@ -52,8 +61,6 @@ export default function AdminPage() {
   const [shopSaving, setShopSaving] = useState(false);
 
   const [userEmail, setUserEmail] = useState('');
-  const [userPass, setUserPass] = useState('');
-  const [showPass, setShowPass] = useState(false);
   const [userRole, setUserRole] = useState('guard');
   const [userShop, setUserShop] = useState('');
   const [userFormOpen, setUserFormOpen] = useState(false);
@@ -64,11 +71,16 @@ export default function AdminPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [listError, setListError] = useState('');
+  const [invitationError, setInvitationError] = useState('');
+  const [invitationActionId, setInvitationActionId] = useState<number | null>(null);
   const [toast, setToast] = useState('');
 
   const loadShops = () => api.get('/admin/shops').then(r => setShops(r.data.shops || [])).catch(() => {});
   const loadUsers = () => api.get('/admin/users').then(r => setUsers(r.data.users || [])).catch(() => {});
-  useEffect(() => { loadShops(); loadUsers(); }, []);
+  const loadInvitations = () => api.get('/admin/invitations')
+    .then(r => { setInvitations(r.data.invitations || []); setInvitationError(''); })
+    .catch((err: any) => setInvitationError(err.response?.data?.detail || 'Unable to load invitations'));
+  useEffect(() => { loadShops(); loadUsers(); loadInvitations(); }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -78,7 +90,7 @@ export default function AdminPage() {
 
   const resetShopForm = () => { setShopName(''); setShopAddr(''); setShopError(''); };
   const resetUserForm = () => {
-    setUserEmail(''); setUserPass(''); setShowPass(false); setUserRole('guard'); setUserShop(''); setUserError('');
+    setUserEmail(''); setUserRole('guard'); setUserShop(''); setUserError('');
   };
 
   const createShop = async (e: React.FormEvent) => {
@@ -102,25 +114,43 @@ export default function AdminPage() {
   const createUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!EMAIL_PATTERN.test(userEmail.trim())) { setUserError('Please enter a valid email address'); return; }
-    if (!userPass) { setUserError('Please enter a password'); return; }
     if (userRole !== 'admin' && !userShop) { setUserError('Please select a shop for this user'); return; }
     setUserSaving(true);
     setUserError('');
     try {
-      await api.post('/admin/users', {
+      await api.post('/admin/users/invite', {
         email: userEmail.trim(),
-        password: userPass,
         role: userRole,
         shop_id: userRole === 'admin' ? null : parseInt(userShop),
       });
       resetUserForm();
       setUserFormOpen(false);
-      setToast('User created');
+      setToast('Invitation sent');
       loadUsers();
+      loadInvitations();
     } catch (err: any) {
       setUserError(err.response?.data?.detail || 'Unable to create user');
     } finally {
       setUserSaving(false);
+    }
+  };
+
+  const manageInvitation = async (invitation: Invitation, action: 'resend' | 'revoke') => {
+    setInvitationActionId(invitation.id);
+    setInvitationError('');
+    try {
+      if (action === 'resend') {
+        await api.post(`/admin/invitations/${invitation.id}/resend`);
+        setToast(`Invitation resent to ${invitation.email}`);
+      } else {
+        await api.delete(`/admin/invitations/${invitation.id}`);
+        setToast(`Invitation revoked for ${invitation.email}`);
+      }
+      await loadInvitations();
+    } catch (err: any) {
+      setInvitationError(err.response?.data?.detail || 'Unable to update invitation');
+    } finally {
+      setInvitationActionId(null);
     }
   };
 
@@ -141,7 +171,7 @@ export default function AdminPage() {
 
   const roles = ['guard', 'manager', ...(isAdmin ? ['admin'] : [])];
   const roleIndex = Math.max(0, roles.indexOf(userRole));
-  const tabs: Tab[] = ['users', 'shops'];
+  const tabs: Tab[] = isAdmin ? ['users', 'invitations', 'shops'] : ['users', 'invitations'];
   const tabIndex = tabs.indexOf(tab);
 
   const q = query.trim().toLowerCase();
@@ -166,7 +196,7 @@ export default function AdminPage() {
             {isAdmin && <> · {shops.length} {shops.length === 1 ? 'shop' : 'shops'}</>}
           </p>
         </div>
-        {isAdmin && (
+        {
           <div className="ad-segmented" role="tablist" aria-label="Admin sections">
             <span
               className="ad-segmented-thumb"
@@ -186,7 +216,7 @@ export default function AdminPage() {
               </button>
             ))}
           </div>
-        )}
+        }
       </Reveal>
 
       {activeTab === 'users' && (
@@ -228,21 +258,7 @@ export default function AdminPage() {
                     autoFocus
                   />
                 </label>
-                <label className="ad-field">
-                  <span className="ad-label">Password</span>
-                  <span className="ad-password">
-                    <input
-                      className="ad-input"
-                      type={showPass ? 'text' : 'password'}
-                      value={userPass}
-                      onChange={e => setUserPass(e.target.value)}
-                      autoComplete="new-password"
-                    />
-                    <button type="button" className="ad-reveal" onClick={() => setShowPass(v => !v)}>
-                      {showPass ? 'Hide' : 'Show'}
-                    </button>
-                  </span>
-                </label>
+                <p className="ad-note">The user will see their assigned role in the invitation email and set their own password.</p>
               </div>
 
               <div className="ad-field">
@@ -285,7 +301,7 @@ export default function AdminPage() {
               <div>
                 <button type="submit" className="ad-btn ad-btn--primary ad-btn--lg" disabled={userSaving}>
                   {userSaving && <span className="ad-spinner" aria-hidden="true" />}
-                  {userSaving ? 'Creating…' : 'Create user'}
+                  {userSaving ? 'Sending…' : 'Send invitation'}
                 </button>
               </div>
             </form>
@@ -331,6 +347,52 @@ export default function AdminPage() {
                             onClick={() => { setConfirmDeleteId(u.id); setListError(''); }}>
                             Delete
                           </button>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'invitations' && (
+        <section key="invitations" className="ad-panel" aria-labelledby="ad-invitations-title">
+          <div className="ad-section-head">
+            <h2 className="ad-section-title" id="ad-invitations-title">Invitations</h2>
+            <span className="ad-meta">{invitations.length} total</span>
+          </div>
+          {invitationError && <p className="ad-error ad-list-error" role="alert">{invitationError}</p>}
+          {invitations.length === 0 ? (
+            <p className="ad-empty">No invitations yet.</p>
+          ) : (
+            <ul className="ad-list">
+              {invitations.map(invitation => {
+                const busy = invitationActionId === invitation.id;
+                const pending = invitation.status === 'pending' || invitation.status === 'expired';
+                return (
+                  <li key={invitation.id} className="ad-item">
+                    <span className="ad-avatar" aria-hidden="true">{invitation.email.charAt(0).toUpperCase()}</span>
+                    <div className="ad-main">
+                      <span className="ad-name">{invitation.email}</span>
+                      <span className="ad-meta">
+                        {capitalize(invitation.role)}
+                        {invitation.shop_name && <><span className="ad-sep">·</span>{invitation.shop_name}</>}
+                        <span className="ad-sep">·</span>{capitalize(invitation.status)}
+                        {pending && <><span className="ad-sep">·</span>Expires {new Date(invitation.expires_at).toLocaleString()}</>}
+                      </span>
+                    </div>
+                    {pending && (
+                      <div className="ad-actions">
+                        <button type="button" className="ad-pill" disabled={busy}
+                          onClick={() => void manageInvitation(invitation, 'resend')}>
+                          {busy ? 'Sending…' : 'Resend'}
+                        </button>
+                        {invitation.status === 'pending' && (
+                          <button type="button" className="ad-pill ad-pill--danger" disabled={busy}
+                            onClick={() => void manageInvitation(invitation, 'revoke')}>Revoke</button>
                         )}
                       </div>
                     )}

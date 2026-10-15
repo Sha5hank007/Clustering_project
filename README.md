@@ -81,16 +81,17 @@ YT_DLP_PATH=/home/your-user/.local/bin/yt-dlp
 
 A Windows `.exe` path cannot be used by a worker running in Linux/WSL, and a Linux path cannot be used by a Windows worker. Restart the stream worker after changing `.env`. To check a YouTube Live URL, the worker runs yt-dlp with `-f "best[ext=mp4]/best" -g`.
 
-### SMTP for organization invitations (optional until provisioning)
+### SMTP for invitations and password recovery
 
-SMTP is required when a superadmin creates an organization or resends its first-admin invitation. It is not required to run the app or create the initial superadmin.
+SMTP is required to invite users and deliver password reset links. It is not required to run the app or create the initial superadmin.
 
 - `SMTP_HOST`: your email provider's SMTP server hostname.
 - `SMTP_PORT`: usually `587` for STARTTLS or `465` for implicit SSL; use the port given by your provider.
 - `SMTP_USERNAME` and `SMTP_PASSWORD`: optional in this application, but most providers require authentication. `SMTP_USERNAME` is the SMTP account/login name (often an email address); use provider-issued SMTP credentials or an app password where required, not necessarily your normal email password. Leave both blank only when the server permits unauthenticated sending.
 - `SMTP_FROM_EMAIL`: sender address accepted by your provider.
 - `SMTP_USE_TLS=true` with `SMTP_USE_SSL=false` for STARTTLS (usually port 587), or `SMTP_USE_TLS=false` with `SMTP_USE_SSL=true` for implicit SSL (usually port 465). Do not enable both.
-- `ORGANIZATION_INVITE_EXPIRY_HOURS`: one-time first-admin invite lifetime; default is 48 hours.
+- `ACCOUNT_INVITE_EXPIRY_HOURS`: one-time account invitation lifetime; default is 48 hours.
+- `PASSWORD_RESET_EXPIRY_HOURS`: one-time password reset link lifetime; default is 1 hour.
 
 Copy the SMTP host, port, username, password, and permitted sender address from your mail provider. Keep `.env` private and never commit or share SMTP credentials.
 
@@ -152,7 +153,7 @@ Migration 009 enforces organization-name uniqueness without regard to capitaliza
 
 The script prompts for an email and a hidden password (minimum 8 characters), and refuses to create the first superadmin if one already exists. To provision an additional trusted superadmin, use `python scripts/create_superadmin.py --additional`. Superadmins are platform operators: they create, suspend, and reactivate organizations, invite additional admins to existing organizations, resend first-admin invitations, and review an audit trail, but cannot access organization operational data. Organization names are unique case-insensitively and after trimming surrounding spaces. If a name already exists, use that organization's **Invite admin** action instead of creating another organization.
 
-Configure SMTP in `backend/.env` before creating organizations. In the superadmin UI, create an organization and provide its first admin's email. FaceTrack emails a single-use setup link that expires after `ORGANIZATION_INVITE_EXPIRY_HOURS`; the invited admin chooses their own password. The organization admin then creates shops and manages users inside their organization. Managers and guards remain assigned to a shop.
+Configure SMTP in `backend/.env` before creating organizations, inviting users, or using password recovery. In the superadmin UI, create an organization and provide its first admin's email. FaceTrack emails a single-use setup link that expires after `ACCOUNT_INVITE_EXPIRY_HOURS`; the invited admin chooses their own password. Organization admins and managers can invite permitted users from the Admin page; the email includes the assigned role and shop, and the invitee chooses their password. Managers and guards remain assigned to a shop. All invitation and password reset tokens are hashed in the shared `account_tokens` table. The login page's **Forgot password?** flow sends a one-time reset link, without revealing whether the submitted email belongs to an account.
 
 The older `python create_admin.py` script is not the current setup path; use `python scripts/create_superadmin.py`.
 
@@ -230,8 +231,10 @@ All routes use the `/api` prefix. Interactive request schemas are also available
 |---|---|---|
 | `POST` | `/auth/login` | JSON `{ "email": "...", "password": "..." }`; returns JWT and user information. |
 | `GET` | `/auth/me` | Return current user identity and role. |
-| `GET` | `/auth/invite-info?token=...` | Validate a first-admin invite link and return its organization/email. |
-| `POST` | `/auth/accept-invite` | Set a password and activate the invited organization admin account. |
+| `POST` | `/auth/forgot-password` | Request a reset email; returns the same response whether or not the account exists. |
+| `POST` | `/auth/reset-password` | Set a new password using a valid one-time reset token. |
+| `GET` | `/auth/invite-info?token=...` | Validate an account invite and return the organization, role, and assigned shop. |
+| `POST` | `/auth/accept-invite` | Set a password and activate the invited account with its assigned role and shop. |
 | `GET` | `/auth/google/login` | Begin optional Google OAuth. |
 | `GET` | `/auth/google/callback` | OAuth callback; user must already exist in FaceTrack. |
 
@@ -298,8 +301,11 @@ Camera IDs are registered per shop and must be selected for both live streams an
 |---|---|---|
 | `POST` | `/admin/shops` | JSON `{ "name": "Shop", "address": "..." }`; admin only. |
 | `GET` | `/admin/shops` | List shops in the admin's tenant. |
-| `POST` | `/admin/users` | Create an organization user with `email`, `password`, `role` (`admin`, `manager`, or `guard`), and `shop_id` where required. Organization creation and first-admin invitation are superadmin-only. |
+| `POST` | `/admin/users/invite` | Invite a user with `email`, `role` (`admin`, `manager`, or `guard`), and `shop_id` where required; the recipient sets their password. Managers can invite only users for their own shop and cannot invite admins. |
 | `GET` | `/admin/users` | List users visible to admin/manager. |
+| `GET` | `/admin/invitations` | List invitations visible to admin/manager, with status and expiry. |
+| `POST` | `/admin/invitations/{invite_id}/resend` | Revoke the old link and email a replacement invitation. |
+| `DELETE` | `/admin/invitations/{invite_id}` | Revoke a pending invitation. |
 | `DELETE` | `/admin/users/{user_id}` | Delete a user visible to admin/manager; cannot delete yourself. |
 | `PATCH` | `/admin/jobs/{job_id}/control` | JSON `{ "action": "pause" }`, `resume`, or `cancel`; admin/manager only. |
 | `GET` | `/stats` | Scoped counts and distinct camera IDs for the dashboard and camera filters. |
@@ -322,10 +328,11 @@ All values can be set in `backend/.env`; defaults are defined in `backend/config
 | `INGEST_DIR` | `../data/ingest` | Uploaded video storage. |
 | `CROP_STORAGE_DIR` | `../data/crops` | Saved face crop storage. |
 | `COOLDOWN_HOURS` | `4` | Per-person, per-camera duplicate sighting suppression window. Crops are saved for sightings that pass this check; this is not a crop deletion interval. |
-| `ORGANIZATION_INVITE_EXPIRY_HOURS` | `48` | Expiry for first-admin setup links. |
-| `SMTP_HOST`, `SMTP_PORT` | Empty, `587` | Outbound mail server for organization invitations. |
+| `ACCOUNT_INVITE_EXPIRY_HOURS` | `48` | Expiry for account invitation links. `ORGANIZATION_INVITE_EXPIRY_HOURS` is accepted as a legacy alias. |
+| `PASSWORD_RESET_EXPIRY_HOURS` | `1` | Expiry for password reset links. |
+| `SMTP_HOST`, `SMTP_PORT` | Empty, `587` | Outbound mail server for invitations and password reset. |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | Empty | Optional SMTP credentials; use TLS or SSL when authenticating. |
-| `SMTP_FROM_EMAIL` | Empty | Sender address for organization invitations. |
+| `SMTP_FROM_EMAIL` | Empty | Sender address for invitation and password reset emails. |
 | `SMTP_USE_TLS`, `SMTP_USE_SSL` | `true`, `false` | Choose STARTTLS or implicit SSL; enable only one. |
 | `YT_DLP_PATH` | Example Windows path in `.env.example` | yt-dlp executable path for YouTube Live stream resolution; use a path valid on the stream-worker host. |
 | `JWT_SECRET` | Development placeholder | Set a long random value outside local development. |

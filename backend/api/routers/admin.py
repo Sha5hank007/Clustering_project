@@ -3,16 +3,25 @@ Admin endpoints for managing tenants, shops, users, and job control.
 
 POST   /api/admin/shops             — create shop (admin only)
 GET    /api/admin/shops             — list shops (admin only)
-POST   /api/admin/users             — create user (admin or manager)
+POST   /api/admin/users/invite      — invite user (admin or manager)
 GET    /api/admin/users             — list users (admin or manager)
+GET    /api/admin/invitations       — list invitations (admin or manager)
 DELETE /api/admin/users/{id}        — delete user (admin or manager)
 PATCH  /api/admin/jobs/{id}/control — pause/resume/cancel a job
 """
 import logging
-from passlib.hash import bcrypt
+import re
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from api.deps import get_db, get_current_user, get_current_scope, require_role, CurrentUser, Scope
+from api.organization_invites import (
+    hash_invite_token,
+    new_invite_token,
+    require_mail_configuration,
+    send_account_invite,
+)
+from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin")
@@ -23,9 +32,8 @@ class CreateShop(BaseModel):
     address: str | None = None
 
 
-class CreateUser(BaseModel):
+class InviteUser(BaseModel):
     email: str
-    password: str
     role: str
     shop_id: int | None = None
 
@@ -83,12 +91,15 @@ def list_shops(
 
 # ── Users ──
 
-@router.post("/users")
-def create_user(
-    body: CreateUser,
+@router.post("/users/invite", status_code=201)
+def invite_user(
+    body: InviteUser,
     user: CurrentUser = Depends(require_role("admin", "manager")),
     db=Depends(get_db),
 ):
+    email = body.email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(400, "Enter a valid email address")
     if body.role not in ("admin", "manager", "guard"):
         raise HTTPException(400, "Role must be: admin, manager, or guard")
 
@@ -112,23 +123,169 @@ def create_user(
         if not cur.fetchone():
             raise HTTPException(404, "Shop not found in your organization")
 
-    email = body.email.strip().lower()
     cur.execute("SELECT id FROM users WHERE LOWER(email) = %s", (email,))
     if cur.fetchone():
-        raise HTTPException(409, "Email already registered")
-
-    password_hash = bcrypt.hash(body.password)
+        raise HTTPException(409, "An account already exists for this email address")
     cur.execute(
         """
-        INSERT INTO users (tenant_id, shop_id, email, password_hash, role)
-        VALUES (%s, %s, %s, %s, %s) RETURNING id
+        SELECT id FROM account_tokens
+        WHERE purpose = 'invite' AND LOWER(email) = %s
+                    AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
         """,
-        (user.tenant_id, body.shop_id, email, password_hash, body.role),
+        (email,),
     )
-    new_id = cur.fetchone()[0]
+    if cur.fetchone():
+        raise HTTPException(409, "An active invitation already exists for this email")
+    require_mail_configuration()
+
+    shop_name = None
+    if body.shop_id:
+        cur.execute("SELECT name FROM shops WHERE id = %s", (body.shop_id,))
+        shop_name = cur.fetchone()[0]
+    token = new_invite_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.account_invite_expiry_hours)
+    with db:
+        cur.execute(
+            """
+            UPDATE account_tokens SET revoked_at = now()
+            WHERE purpose = 'invite' AND LOWER(email) = %s
+              AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at <= now()
+            """,
+            (email,),
+        )
+        cur.execute(
+            """
+            INSERT INTO account_tokens
+                (purpose, tenant_id, email, role, shop_id, token_hash, expires_at, created_by)
+            VALUES ('invite', %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (user.tenant_id, email, body.role, body.shop_id, hash_invite_token(token), expires_at, user.user_id),
+        )
+        invite_id = cur.fetchone()[0]
+
+    cur.execute("SELECT name FROM tenants WHERE id = %s", (user.tenant_id,))
+    tenant_name = cur.fetchone()[0]
+    send_account_invite(email, tenant_name, body.role, shop_name, token)
+    logger.info("User invited: id=%d email=%s role=%s (by user %d)", invite_id, email, body.role, user.user_id)
+    return {"id": invite_id, "email": email, "role": body.role, "shop_id": body.shop_id, "status": "pending"}
+
+
+@router.get("/invitations")
+def list_invitations(
+    user: CurrentUser = Depends(require_role("admin", "manager")),
+    db=Depends(get_db),
+):
+    cur = db.cursor()
+    if user.role == "admin":
+        scope_sql = "i.tenant_id = %s"
+        scope_params = [user.tenant_id]
+    else:
+        scope_sql = "i.shop_id = %s"
+        scope_params = [user.shop_id]
+    cur.execute(
+        """
+        SELECT i.id, i.email, i.role, i.shop_id, s.name, i.created_at,
+               i.expires_at, i.consumed_at, i.revoked_at
+        FROM account_tokens i
+        LEFT JOIN shops s ON s.id = i.shop_id
+        WHERE i.purpose = 'invite' AND %s
+        ORDER BY i.created_at DESC, i.id DESC
+        """ % scope_sql,
+        scope_params,
+    )
+    now = datetime.now(timezone.utc)
+    invitations = []
+    for row in cur.fetchall():
+        status = "accepted" if row[7] else "revoked" if row[8] else "expired" if row[6] <= now else "pending"
+        invitations.append({
+            "id": row[0], "email": row[1], "role": row[2], "shop_id": row[3],
+            "shop_name": row[4], "created_at": row[5].isoformat() if row[5] else None,
+            "expires_at": row[6].isoformat(), "status": status,
+        })
+    return {"invitations": invitations}
+
+
+@router.post("/invitations/{invite_id}/resend")
+def resend_invitation(
+    invite_id: int,
+    user: CurrentUser = Depends(require_role("admin", "manager")),
+    db=Depends(get_db),
+):
+    require_mail_configuration()
+    cur = db.cursor()
+    if user.role == "admin":
+        scope_sql = "i.tenant_id = %s"
+        scope_params = [user.tenant_id]
+    else:
+        scope_sql = "i.shop_id = %s"
+        scope_params = [user.shop_id]
+    cur.execute(
+        """
+        SELECT i.email, i.role, i.shop_id, i.tenant_id, t.name, t.is_active, s.name
+        FROM account_tokens i
+        JOIN tenants t ON t.id = i.tenant_id
+        LEFT JOIN shops s ON s.id = i.shop_id
+        WHERE i.id = %s AND i.purpose = 'invite' AND %s
+          AND i.consumed_at IS NULL AND i.revoked_at IS NULL
+        FOR UPDATE OF i
+        """ % ("%s", scope_sql),
+        [invite_id] + scope_params,
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Invitation not found")
+    email, role, shop_id, tenant_id, tenant_name, tenant_active, shop_name = row
+    if not tenant_active:
+        raise HTTPException(409, "Reactivate the organization before resending invitations")
+    cur.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(%s)", (email,))
+    if cur.fetchone():
+        raise HTTPException(409, "An account already exists for this email address")
+
+    token = new_invite_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.account_invite_expiry_hours)
+    with db:
+        cur.execute("UPDATE account_tokens SET revoked_at = now() WHERE id = %s", (invite_id,))
+        cur.execute(
+            """
+            INSERT INTO account_tokens
+                (purpose, tenant_id, email, role, shop_id, is_first_admin, token_hash, expires_at, created_by)
+            VALUES ('invite', %s, %s, %s, %s, FALSE, %s, %s, %s)
+            RETURNING id
+            """,
+            (tenant_id, email, role, shop_id, hash_invite_token(token), expires_at, user.user_id),
+        )
+        new_id = cur.fetchone()[0]
+    send_account_invite(email, tenant_name, role, shop_name, token)
+    return {"id": new_id, "email": email, "status": "pending"}
+
+
+@router.delete("/invitations/{invite_id}")
+def revoke_invitation(
+    invite_id: int,
+    user: CurrentUser = Depends(require_role("admin", "manager")),
+    db=Depends(get_db),
+):
+    cur = db.cursor()
+    if user.role == "admin":
+        scope_sql = "tenant_id = %s"
+        scope_params = [user.tenant_id]
+    else:
+        scope_sql = "shop_id = %s"
+        scope_params = [user.shop_id]
+    cur.execute(
+        """
+        UPDATE account_tokens SET revoked_at = now()
+        WHERE id = %s AND purpose = 'invite' AND %s
+          AND consumed_at IS NULL AND revoked_at IS NULL
+        RETURNING id
+        """ % ("%s", scope_sql),
+        [invite_id] + scope_params,
+    )
+    if not cur.fetchone():
+        raise HTTPException(404, "Pending invitation not found")
     db.commit()
-    logger.info("User created: id=%d email=%s role=%s (by user %d)" % (new_id, email, body.role, user.user_id))
-    return {"id": new_id, "email": email, "role": body.role, "shop_id": body.shop_id}
+    return {"id": invite_id, "status": "revoked"}
 
 
 @router.get("/users")

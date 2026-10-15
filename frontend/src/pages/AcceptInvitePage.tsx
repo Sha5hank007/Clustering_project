@@ -5,6 +5,8 @@ import api from '../api/client';
 interface InviteInfo {
   email: string;
   organization_name: string;
+  role: string;
+  shop_name: string | null;
   expires_at: string;
 }
 
@@ -58,11 +60,12 @@ export default function AcceptInvitePage() {
       <style>{styles}</style>
       <section className="ai-panel">
         <p className="ai-eyebrow">FaceTrack account setup</p>
-        <h1>Join your organization</h1>
+        <h1>Set up your account</h1>
         {loading ? <p className="ai-muted">Checking your invitation…</p> : invite ? (
           <>
             <p className="ai-muted">
-              Set a password for <strong>{invite.email}</strong> to administer {invite.organization_name}.
+              Set a password for <strong>{invite.email}</strong>. Your role is <strong>{invite.role}</strong>
+              {invite.shop_name ? <> at <strong>{invite.shop_name}</strong></> : null} in {invite.organization_name}.
             </p>
             <form onSubmit={acceptInvite} className="ai-form">
               <label>

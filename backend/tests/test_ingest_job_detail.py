@@ -8,11 +8,14 @@ class FakeCursor:
     def __init__(self, job_row, crop_rows):
         self.job_row = job_row
         self.crop_rows = crop_rows
+        self.last_query = ""
 
-    def execute(self, *args, **kwargs):
-        pass
+    def execute(self, query, *args, **kwargs):
+        self.last_query = query
 
     def fetchone(self):
+        if "COUNT(*)" in self.last_query:
+            return (len(self.crop_rows),)
         return self.job_row
 
     def fetchall(self):
@@ -45,8 +48,8 @@ def test_get_job_status_includes_paginated_crops():
         9,
     )
     crop_rows = [
-        (11, 7, "Alice", "Frontdoor", datetime(2026, 8, 27, 16, 5, 1, tzinfo=timezone.utc), 0.93, "/data/crops/person_7/crop_1.jpg"),
-        (12, 5, "Bob", "Frontdoor", datetime(2026, 8, 27, 16, 5, 2, tzinfo=timezone.utc), 0.89, "/data/crops/person_5/crop_2.jpg"),
+        (11, 7, "Frontdoor", datetime(2026, 8, 27, 16, 5, 1, tzinfo=timezone.utc), 0.93, "/data/crops/person_7/crop_1.jpg", "Alice"),
+        (12, 5, "Frontdoor", datetime(2026, 8, 27, 16, 5, 2, tzinfo=timezone.utc), 0.89, "/data/crops/person_5/crop_2.jpg", "Bob"),
     ]
 
     result = get_job_status(

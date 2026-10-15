@@ -12,6 +12,7 @@ import AdminPage from './pages/AdminPage';
 import CamerasPage from './pages/CamerasPage';
 import SuperadminPage from './pages/SuperadminPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
+import { ForgotPasswordPage, ResetPasswordPage } from './pages/PasswordRecoveryPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuth();
@@ -33,6 +34,8 @@ function AppRoutes() {
       <main className="app-main"><Routes>
         <Route path="/login" element={token ? <Navigate to={home} replace /> : <LoginPage />} />
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/" element={<ProtectedRoute>{user?.role === 'superadmin' ? <Navigate to="/superadmin" replace /> : <DashboardPage />}</ProtectedRoute>} />
         <Route path="/ingest" element={<ProtectedRoute><IngestPage /></ProtectedRoute>} />
         <Route path="/persons" element={<ProtectedRoute><PersonsPage /></ProtectedRoute>} />

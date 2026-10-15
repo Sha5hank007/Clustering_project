@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
@@ -115,7 +115,7 @@ export default function LoginPage() {
           <h1 className="lg-title lg-step" style={{ animationDelay: '60ms' }}>Sign in to FaceTrack</h1>
           <p className="lg-subtitle lg-step" style={{ animationDelay: '110ms' }}>Welcome back. Enter your details to continue.</p>
           {searchParams.get('invite') === 'accepted' && (
-            <p className="lg-success" role="status">Your admin account is ready. Sign in to continue.</p>
+            <p className="lg-success" role="status">Your account is ready. Sign in to continue.</p>
           )}
 
           {GOOGLE_CLIENT_ID && (
@@ -165,6 +165,11 @@ export default function LoginPage() {
               >
                 {showPassword ? 'Hide' : 'Show'}
               </button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -8 }}>
+              <Link to="/forgot-password" style={{ color: '#0071e3', fontSize: 13, textDecoration: 'none' }}>
+                Forgot password?
+              </Link>
             </div>
           </div>
 

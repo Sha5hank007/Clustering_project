@@ -57,12 +57,12 @@ def list_organizations(
         SELECT t.id, t.name, t.is_active, t.created_at,
                (SELECT COUNT(*) FROM shops s WHERE s.tenant_id = t.id),
                (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id),
-               latest.email, latest.accepted_at, latest.expires_at, latest.revoked_at
+               latest.email, latest.consumed_at, latest.expires_at, latest.revoked_at
         FROM tenants t
         LEFT JOIN LATERAL (
-            SELECT i.email, i.accepted_at, i.expires_at, i.revoked_at
-            FROM organization_admin_invites i
-            WHERE i.tenant_id = t.id AND i.is_first_admin = TRUE
+            SELECT i.email, i.consumed_at, i.expires_at, i.revoked_at
+            FROM account_tokens i
+            WHERE i.tenant_id = t.id AND i.purpose = 'invite' AND i.is_first_admin = TRUE
             ORDER BY i.created_at DESC, i.id DESC
             LIMIT 1
         ) latest ON TRUE
@@ -152,9 +152,9 @@ def create_organization(
         raise HTTPException(409, "An account already exists for this email address")
     cur.execute(
         """
-        SELECT id FROM organization_admin_invites
-        WHERE LOWER(email) = %s
-          AND accepted_at IS NULL
+                SELECT id FROM account_tokens
+                WHERE purpose = 'invite' AND LOWER(email) = %s
+                    AND consumed_at IS NULL
           AND revoked_at IS NULL
           AND expires_at > now()
         """,
@@ -169,10 +169,10 @@ def create_organization(
         with db:
             cur.execute(
                 """
-                UPDATE organization_admin_invites
+                                UPDATE account_tokens
                 SET revoked_at = now()
-                WHERE LOWER(email) = %s
-                  AND accepted_at IS NULL
+                                WHERE purpose = 'invite' AND LOWER(email) = %s
+                                    AND consumed_at IS NULL
                   AND revoked_at IS NULL
                   AND expires_at <= now()
                 """,
@@ -182,15 +182,15 @@ def create_organization(
             tenant_id = cur.fetchone()[0]
             cur.execute(
                 """
-                INSERT INTO organization_admin_invites
-                    (tenant_id, email, token_hash, expires_at, created_by, is_first_admin)
-                VALUES (%s, %s, %s, %s, %s, TRUE)
+                INSERT INTO account_tokens
+                    (purpose, tenant_id, email, role, token_hash, expires_at, created_by, is_first_admin)
+                VALUES ('invite', %s, %s, 'admin', %s, %s, %s, TRUE)
                 """,
                 (
                     tenant_id,
                     email,
                     hash_invite_token(token),
-                    datetime.now(timezone.utc) + timedelta(hours=settings.organization_invite_expiry_hours),
+                    datetime.now(timezone.utc) + timedelta(hours=settings.account_invite_expiry_hours),
                     user.user_id,
                 ),
             )
@@ -241,8 +241,8 @@ def resend_admin_invite(
 
     cur.execute(
         """
-        SELECT email FROM organization_admin_invites
-        WHERE tenant_id = %s AND is_first_admin = TRUE
+        SELECT email FROM account_tokens
+        WHERE tenant_id = %s AND purpose = 'invite' AND is_first_admin = TRUE
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
@@ -257,10 +257,10 @@ def resend_admin_invite(
         raise HTTPException(409, "The invited admin already has an account")
     cur.execute(
         """
-        SELECT id FROM organization_admin_invites
-        WHERE LOWER(email) = LOWER(%s)
+                SELECT id FROM account_tokens
+                WHERE purpose = 'invite' AND LOWER(email) = LOWER(%s)
           AND tenant_id <> %s
-          AND accepted_at IS NULL
+                    AND consumed_at IS NULL
           AND revoked_at IS NULL
           AND expires_at > now()
         """,
@@ -274,24 +274,24 @@ def resend_admin_invite(
         with db:
             cur.execute(
                 """
-                UPDATE organization_admin_invites
+                                UPDATE account_tokens
                 SET revoked_at = now()
-                WHERE tenant_id = %s AND is_first_admin = TRUE
-                  AND accepted_at IS NULL AND revoked_at IS NULL
+                                WHERE tenant_id = %s AND purpose = 'invite' AND is_first_admin = TRUE
+                                    AND consumed_at IS NULL AND revoked_at IS NULL
                 """,
                 (tenant_id,),
             )
             cur.execute(
                 """
-                INSERT INTO organization_admin_invites
-                    (tenant_id, email, token_hash, expires_at, created_by, is_first_admin)
-                VALUES (%s, %s, %s, %s, %s, TRUE)
+                INSERT INTO account_tokens
+                    (purpose, tenant_id, email, role, token_hash, expires_at, created_by, is_first_admin)
+                VALUES ('invite', %s, %s, 'admin', %s, %s, %s, TRUE)
                 """,
                 (
                     tenant_id,
                     email,
                     hash_invite_token(token),
-                    datetime.now(timezone.utc) + timedelta(hours=settings.organization_invite_expiry_hours),
+                    datetime.now(timezone.utc) + timedelta(hours=settings.account_invite_expiry_hours),
                     user.user_id,
                 ),
             )
@@ -335,8 +335,8 @@ def invite_organization_admin(
         raise HTTPException(409, "An account already exists for this email address")
     cur.execute(
         """
-        SELECT id FROM organization_admin_invites
-        WHERE LOWER(email) = %s AND accepted_at IS NULL
+        SELECT id FROM account_tokens
+        WHERE purpose = 'invite' AND LOWER(email) = %s AND consumed_at IS NULL
           AND revoked_at IS NULL AND expires_at > now()
         """,
         (email,),
@@ -349,24 +349,24 @@ def invite_organization_admin(
         with db:
             cur.execute(
                 """
-                UPDATE organization_admin_invites
+                UPDATE account_tokens
                 SET revoked_at = now()
-                WHERE LOWER(email) = %s AND accepted_at IS NULL
+                WHERE purpose = 'invite' AND LOWER(email) = %s AND consumed_at IS NULL
                   AND revoked_at IS NULL AND expires_at <= now()
                 """,
                 (email,),
             )
             cur.execute(
                 """
-                INSERT INTO organization_admin_invites
-                    (tenant_id, email, token_hash, expires_at, created_by, is_first_admin)
-                VALUES (%s, %s, %s, %s, %s, FALSE)
+                INSERT INTO account_tokens
+                    (purpose, tenant_id, email, role, token_hash, expires_at, created_by, is_first_admin)
+                VALUES ('invite', %s, %s, 'admin', %s, %s, %s, FALSE)
                 """,
                 (
                     tenant_id,
                     email,
                     hash_invite_token(token),
-                    datetime.now(timezone.utc) + timedelta(hours=settings.organization_invite_expiry_hours),
+                    datetime.now(timezone.utc) + timedelta(hours=settings.account_invite_expiry_hours),
                     user.user_id,
                 ),
             )

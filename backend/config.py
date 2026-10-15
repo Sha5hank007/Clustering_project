@@ -1,5 +1,6 @@
 from typing import Optional
 from pathlib import Path
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -58,7 +59,11 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret: str = "change-this-to-a-random-string"
     jwt_expiry_hours: int = 24
-    organization_invite_expiry_hours: int = 48
+    account_invite_expiry_hours: int = Field(
+        default=48,
+        validation_alias=AliasChoices("ACCOUNT_INVITE_EXPIRY_HOURS", "ORGANIZATION_INVITE_EXPIRY_HOURS"),
+    )
+    password_reset_expiry_hours: int = 1
 
     # Organization invitation email
     smtp_host: str = ""
